@@ -25,7 +25,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
@@ -87,9 +87,7 @@ class ModelBundle:
 def build_model(params: dict | None = None) -> TransformedTargetRegressor:
     """XGBoost regressor wrapped to train on log1p(titer)."""
     regressor = XGBRegressor(**(params or DEFAULT_XGB_PARAMS))
-    return TransformedTargetRegressor(
-        regressor=regressor, func=np.log1p, inverse_func=np.expm1
-    )
+    return TransformedTargetRegressor(regressor=regressor, func=np.log1p, inverse_func=np.expm1)
 
 
 # ---------------------------------------------------------------------------
@@ -134,7 +132,7 @@ def cross_validate(
 def _log_cv_results(results: dict[str, dict[str, float]]) -> None:
     for name, metrics in results.items():
         logger.info(
-            "[%-13s] RMSE=%.1f±%.1f  MAE=%.1f±%.1f  MAPE=%.1f%%  R2=%.3f",
+            "[%-13s] RMSE=%.1f+/-%.1f  MAE=%.1f+/-%.1f  MAPE=%.1f%%  R2=%.3f",
             name,
             metrics["rmse"],
             metrics["rmse_std"],
@@ -176,7 +174,7 @@ def train(
             "n_features": int(X.shape[1]),
             "cv": cv_results,
             "xgb_params": params or DEFAULT_XGB_PARAMS,
-            "created_utc": datetime.now(timezone.utc).isoformat(),
+            "created_utc": datetime.now(UTC).isoformat(),
         },
     )
     return bundle, cv_results
@@ -239,8 +237,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def _run_train(args: argparse.Namespace) -> int:
     bundle, _ = train(
-        args.data, args.targets,
-        n_splits=args.n_splits, n_repeats=args.n_repeats, seed=args.seed,
+        args.data,
+        args.targets,
+        n_splits=args.n_splits,
+        n_repeats=args.n_repeats,
+        seed=args.seed,
     )
     save_bundle(bundle, args.model)
     return 0

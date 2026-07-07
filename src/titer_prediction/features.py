@@ -60,9 +60,7 @@ def gompertz(t, a, b, t_i, k_g, y0):
     return y0 + a * np.exp(-b * np.exp(-k_g * (t - t_i)))
 
 
-def fit_gompertz(
-    t: np.ndarray, y: np.ndarray
-) -> tuple[np.ndarray, bool]:
+def fit_gompertz(t: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, bool]:
     """Fit the Gompertz curve to a single trajectory.
 
     Returns ``(params, ok)`` where ``params`` is the length-5 parameter vector in
@@ -95,9 +93,7 @@ def fit_gompertz(
         # Growth-phase slope (start -> peak) seeds the growth-rate guess k_g.
         if cut > 0:
             design = np.column_stack((np.ones(cut + 1), t[: cut + 1]))
-            slope = np.linalg.lstsq(
-                design, np.log(y[: cut + 1] - y0_est + 1e-3), rcond=None
-            )[0][1]
+            slope = np.linalg.lstsq(design, np.log(y[: cut + 1] - y0_est + 1e-3), rcond=None)[0][1]
         else:
             slope = 0.01
 
@@ -115,8 +111,13 @@ def fit_gompertz(
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             params, _ = curve_fit(
-                gompertz, t, y, p0=p0, bounds=(lower, upper),
-                method="trf", maxfev=10000,
+                gompertz,
+                t,
+                y,
+                p0=p0,
+                bounds=(lower, upper),
+                method="trf",
+                maxfev=10000,
             )
         return np.asarray(params, dtype=float), True
     except Exception:
@@ -131,9 +132,7 @@ def _r2(t: np.ndarray, y: np.ndarray, params: np.ndarray) -> float:
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
 
 
-def gompertz_features(
-    df: pd.DataFrame, channel: str = GOMPERTZ_VCD_CHANNEL
-) -> pd.DataFrame:
+def gompertz_features(df: pd.DataFrame, channel: str = GOMPERTZ_VCD_CHANNEL) -> pd.DataFrame:
     """Per-experiment Gompertz parameters (+ fit quality) for one channel."""
     rows: dict[str, dict[str, float]] = {}
     for exp, group in df.groupby(schema.EXP_COL, sort=False):
@@ -160,9 +159,7 @@ def gompertz_features(
 # ---------------------------------------------------------------------------
 # Fetch the canonical feature names once so output columns stay consistent even
 # when a particular series fails (e.g. constant channels -> NaNs).
-CATCH22_NAMES: list[str] = pycatch22.catch22_all(
-    list(range(10)), catch24=False
-)["names"]
+CATCH22_NAMES: list[str] = pycatch22.catch22_all(list(range(10)), catch24=False)["names"]
 
 
 def _catch22_channel(values: np.ndarray) -> dict[str, float]:
@@ -180,9 +177,7 @@ def _catch22_channel(values: np.ndarray) -> dict[str, float]:
         return dict.fromkeys(CATCH22_NAMES, np.nan)
 
 
-def catch22_features(
-    df: pd.DataFrame, channels: list[str] | None = None
-) -> pd.DataFrame:
+def catch22_features(df: pd.DataFrame, channels: list[str] | None = None) -> pd.DataFrame:
     """Per-experiment catch22 features for each requested channel.
 
     Defaults to the measured-state (``X:``) channels: they carry the dynamic,
@@ -198,9 +193,7 @@ def catch22_features(
         feat: dict[str, float] = {}
         for channel in channels:
             stats = _catch22_channel(group[channel].to_numpy(dtype=float))
-            feat.update(
-                {f"catch22_{channel}_{name}": value for name, value in stats.items()}
-            )
+            feat.update({f"catch22_{channel}_{name}": value for name, value in stats.items()})
         rows[exp] = feat
 
     out = pd.DataFrame.from_dict(rows, orient="index")
@@ -241,8 +234,7 @@ def build_baseline_dataset(
         missing = set(features.index) - set(targets.index)
         if missing:
             raise ValueError(
-                f"{len(missing)} experiments have no target "
-                f"(e.g. {sorted(missing)[:3]})."
+                f"{len(missing)} experiments have no target (e.g. {sorted(missing)[:3]})."
             )
         targets = targets.reindex(features.index)
 

@@ -1,0 +1,8 @@
+# Normalise line endings: store text as LF in the repo, check out native.
+* text=auto eol=lf
+
+# Binary / generated artifacts that must not be line-ending normalised.
+*.parquet binary
+*.joblib binary
+*.pdf binary
+uv.lock text eol=lf
