@@ -1,0 +1,37 @@
+# --- Provided challenge data (kept out of version control) -------------------
+# The raw CSVs and spec are treated as confidential challenge material.
+# See README.md for how to place them locally under data/.
+data/
+
+# --- Model artifacts / generated outputs -------------------------------------
+artifacts/
+*.parquet
+*.npz
+*.joblib
+*.pkl
+*.json.model
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# --- Tooling caches ----------------------------------------------------------
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# --- Editor / OS -------------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Keep the challenge brief out of the repo too ----------------------------
+*.pdf

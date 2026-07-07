@@ -1,0 +1,121 @@
+# Prompt Log
+
+This document records the prompts used to drive the AI-assisted parts of this
+project, in refined / flowing form. The DataHow challenge explicitly invites the
+use of AI tools while asking that the author understand and defend every
+decision. This log makes the collaboration transparent: each entry captures the
+*intent* behind a prompt, not a verbatim transcript, and is paired with the
+decisions that resulted.
+
+---
+
+## 1. Project framing and first scaffold
+
+**Goal.** Set up a clean, reproducible project for the DataHow titer-prediction
+challenge and lay out the modelling strategy.
+
+**Prompt (refined).**
+> Read the challenge brief and the provided data. The task is a regression
+> problem: predict the single final titer of a simulated mAb bioprocess from
+> per-experiment time-series inputs. I want two models:
+> 1. A **baseline** built from light feature engineering (e.g. time since feed
+>    stopped, trajectory aggregates) feeding a gradient-boosted model such as
+>    XGBoost. Rationale: fast to build, strong on tabular data, and not
+>    data-hungry — appropriate given only ~100 experiments.
+> 2. A more sophisticated **neural controlled differential equation** (using
+>    `diffrax`). We expect its accuracy to be at best on par with the baseline
+>    given the small dataset, but it demonstrates how we would approach the
+>    problem in a realistic, data-rich setting.
+>
+> Scaffold the repository with `uv` as the package manager, keeping the
+> environment file current for easy installation. Use a `src/` package layout
+> with three modules — `data_preprocessing`, `regression` (XGBoost), and `cde`
+> (diffrax) — each exposing a CLI `main()` so it can run on a server. Add a
+> single project-wide test file focused on data integrity. Initialise Git with a
+> `.gitignore` that excludes the (confidential) data. Flag any software or ML
+> design improvements and check in before major architecture decisions.
+
+**Key decisions taken (see README for full rationale).**
+- `src/titer_prediction/` package layout over flat scripts — cleaner imports and
+  a smoother path to the Part 2 inference server.
+- Raw data is **git-ignored**; treated as confidential challenge material.
+- Build in stages with check-ins: scaffold + `data_preprocessing` first, verified
+  against the real CSVs, before implementing `regression` and `cde`.
+- Feature strategy for the baseline: pass-through of the 13 `Z:` design scalars,
+  plus per-channel aggregates (first/last/min/max/mean/std/AUC/slope) of the 4
+  `W:` control and 6 `X:` state trajectories, with the integral-of-viable-cells
+  (AUC of `X:VCD`) called out as the classically strongest titer predictor.
+
+---
+
+## 2. README framing and baseline feature strategy
+
+**Goal.** Lead the README with a clear statement of the problem and its
+challenges, and pin down the feature-engineering approach for the baseline.
+
+**Prompt (refined).**
+> Open the README by explaining our understanding of the problem. Define what
+> the `Z:`, `W:`, `X:` and `Y:` variables mean, then frame the task's two core
+> challenges: (1) regressing a single final titer from variable-length inputs
+> (differing numbers of time-points), and (2) discontinuous control inputs
+> (e.g. the feed being switched off). State that the *ideal* solution is a
+> hybrid model — an extended metabolic model, or an ODE with interpretable
+> learnable parameters such as yields, for which we hold good priors — while
+> acknowledging this is beyond the scope and data budget of this task.
+>
+> Then explain our pragmatic plan: solve the task simply and efficiently with a
+> generic regressor like XGBoost (noting alternatives such as Gaussian Process
+> regression). To handle the differing number of time-points, engineer features
+> with pipelines like **tsfresh** and by **fitting Gompertz growth curves and
+> extracting their parameters**. Use this 4-parameter-with-baseline Gompertz
+> form for the curve-fit features:
+>
+> ```python
+> def gompertz(t, a, b, t_i, k_g, y0):
+>     return y0 + a * np.exp(-b * np.exp(-k_g * (t - t_i)))
+> ```
+
+**Key decisions taken.**
+- README now opens with *Problem understanding*, *The two core challenges*, and
+  *Modelling philosophy* sections before any code/usage detail.
+- Baseline feature engineering = Gompertz curve-fit parameters (interpretable
+  growth-curve summary) **+** tsfresh automated features **+** pass-through `Z:`
+  scalars and simple aggregates, feeding XGBoost.
+- Alternatives explicitly acknowledged (Gaussian Processes et al.); hybrid /
+  mechanistic modelling named as the ideal-but-out-of-scope direction.
+- Gompertz reference implementation adapted from the author's prior work
+  (`diffbio/experiments/process_Lrham.py`); to be cleaned up and made robust for
+  the `regression` module.
+
+## 3. Feature-library pivot: tsfresh -> catch22 (single environment)
+
+**Goal.** Keep the whole project installable in one environment.
+
+**Prompt (refined).**
+> Are there alternatives to tsfresh that don't require a separate environment?
+
+**Context / decision.**
+- tsfresh hard-depends on `stumpy -> numba`, and numba cannot tolerate the new
+  numpy that JAX/diffrax pull in. Isolating tsfresh in its own extra worked but
+  meant two environments — against the "easy installation" goal.
+- Chose **catch22 (`pycatch22`)** instead: a canonical 22-feature time-series
+  extractor, numba-free and numpy-2.x compatible, so it coexists with the JAX
+  stack in a single resolution. Its compact feature count is also a better fit
+  for ~100 samples than tsfresh's thousands.
+- Reverted the conflicting-extras split; back to one unified dependency set.
+- Baseline features are now: **Gompertz(VCD) params + catch22 per channel + `Z:`
+  scalars + simple aggregates**, feeding XGBoost.
+
+<!--
+Template for subsequent entries:
+
+## N. <short title>
+
+**Goal.** <one line>
+
+**Prompt (refined).**
+> <flowing version of the instruction>
+
+**Key decisions taken.**
+- <decision + one-line rationale>
+-->
