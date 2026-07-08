@@ -333,7 +333,9 @@ def train(
     epochs: int = 300,
     lr: float = 3e-3,
     val_frac: float = 0.2,
-    seed: int = 0,
+    split_seed: int = 0,
+    model_seed: int = 1,
+    refit_seed: int = 2,
     refit_all: bool = True,
 ) -> tuple[CDEBundle, dict[str, float], list[dict]]:
     """Train the neural CDE with a validation holdout, then refit on all data.
@@ -349,7 +351,7 @@ def train(
     n_w = sum(c.startswith(schema.CONTROL_PREFIX) for c in seq.channel_names)
 
     n = ys_np.shape[0]
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(split_seed)
     perm = rng.permutation(n)
     n_val = max(1, int(round(val_frac * n)))
     val_idx, train_idx = perm[:n_val], perm[n_val:]
@@ -361,11 +363,16 @@ def train(
         "epochs": epochs,
         "lr": lr,
         "val_frac": val_frac,
-        "seed": seed,
+        "split_seed": split_seed,
+        "model_seed": model_seed,
+        "refit_seed": refit_seed,
+        "refit_all": refit_all,
         "n_channels": int(ys_np.shape[2]),
         "n_static": int(static_np.shape[1]),
         "n_w": int(n_w),
         "static_init_cols": _static_matrix(seq)[1],
+        "train_indices": [int(i) for i in train_idx],
+        "val_indices": [int(i) for i in val_idx],
     }
 
     def fit(train_indices, key, val_indices=None):
@@ -418,8 +425,8 @@ def train(
                 )
         return model, history
 
-    key = jax.random.PRNGKey(seed)
-    k_val, k_full = jax.random.split(key)
+    k_val = jax.random.PRNGKey(model_seed)
+    k_full = jax.random.PRNGKey(refit_seed)
 
     # 1) Fit on the train split; report honest validation metrics and keep history.
     logger.info("Fitting holdout model (%d train / %d val)...", len(train_idx), n_val)
@@ -539,7 +546,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--epochs", type=int, default=300)
     p_train.add_argument("--lr", type=float, default=3e-3)
     p_train.add_argument("--val-frac", type=float, default=0.2)
-    p_train.add_argument("--seed", type=int, default=0)
+    p_train.add_argument("--split-seed", type=int, default=0)
+    p_train.add_argument("--model-seed", type=int, default=1)
+    p_train.add_argument("--refit-seed", type=int, default=2)
     p_train.add_argument(
         "--history",
         default=None,
@@ -564,7 +573,9 @@ def _run_train(args: argparse.Namespace) -> int:
         epochs=args.epochs,
         lr=args.lr,
         val_frac=args.val_frac,
-        seed=args.seed,
+        split_seed=args.split_seed,
+        model_seed=args.model_seed,
+        refit_seed=args.refit_seed,
     )
     save_bundle(bundle, args.model)
     history_path = args.history or Path(args.model).with_suffix(".history.csv")
