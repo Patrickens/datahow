@@ -23,11 +23,12 @@ def _():
 @app.cell
 def _(mo):
     mo.md(r"""
-    # Predicting final mAb titer — data & baseline walkthrough
+    # Predicting final mAb titer — modelling walkthrough
 
     This notebook tells the story of **Part 1** of the challenge: understand the
-    data, turn variable-length bioprocess trajectories into features, and build a
-    baseline regression model for the **final product titer**.
+    data, turn variable-length bioprocess trajectories into features, compare a
+    strong XGBoost baseline with a neural CDE, and predict the **final product
+    titer**.
 
     Each experiment is a simulated fed-batch bioreactor run recorded as a short
     daily time series. Variables follow a prefix convention:
@@ -45,6 +46,9 @@ def _(mo):
        a variable-length multivariate path to one number.
     2. **Discontinuous controls.** Feeds switch on/off at discrete days, so the
        driving signals are step-like, not smooth.
+
+    With ~100 experiments, clean decisions and reproducible evaluation matter more
+    than squeezing out maximum performance.
     """)
     return
 
@@ -71,6 +75,30 @@ def _(mo):
     )
     summary
     return df, plotting, targets
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 2. Modelling options
+
+    The target is one scalar final titer per experiment, while the inputs are short,
+    variable-length bioprocess trajectories. We considered three options:
+
+    1. **XGBoost on engineered features** — fast, strong on small data, easy to deploy,
+       and interpretable through feature importance; the cost is that time dependence
+       must be engineered manually.
+    2. **Neural CDE** — consumes the full path, handles unequal sampling/missingness,
+       discontinuous controls, and interpolation choices; the cost is that it is less
+       interpretable and harder to explain to biologists.
+    3. **Mechanistic ODE with event-driven controls** — biologically interpretable
+       states and parameters; the cost is formulation time, identifiability, event
+       handling, solver difficulty, and misspecification risk.
+
+    For this take-home the useful comparison is therefore **XGBoost versus the neural
+    CDE**.
+    """)
+    return
 
 
 @app.cell
@@ -143,7 +171,7 @@ def _(mo):
     challenge #2 made visible — a smooth (linear/spline) interpolation of these
     signals would fabricate ramps that never happened, which is exactly why the
     neural CDE **step-interpolates the `W:` controls** (while linearly interpolating
-    the continuous `X:` states — see section 4).
+    the continuous `X:` states — see the CDE section).
     """)
     return
 
@@ -158,15 +186,18 @@ def _(df, plotting, targets):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## 2. Preprocessing: from trajectories to features
+    ## 3. Feature engineering: from trajectories to features
 
     A generic regressor needs a **fixed-length feature vector** per experiment. We
-    collapse each variable-length trajectory three complementary ways:
+    collapse each variable-length trajectory four complementary ways:
 
     1. **Gompertz growth-curve parameters** (this section) — fit to VCD,
-    2. **TSFEL features** — a curated, interpretable set of statistical & temporal
+    2. **Substrate/feed-consumption features** — initial/final concentrations, AUCs,
+       matching feed integrals for glucose/glutamine, approximate net consumed, and
+       simple normalisations,
+    3. **TSFEL features** — a curated, interpretable set of statistical & temporal
        features per state channel (including the **area under the curve**),
-    3. **static + meta** — the pass-through `Z:` design scalars plus the observed
+    4. **static + meta** — the pass-through `Z:` design scalars plus the observed
        duration and number of timepoints.
 
     ### Gompertz fits on VCD
@@ -198,14 +229,11 @@ def _(df, plotting, targets):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### Do the Gompertz parameters carry signal?
+    ### Gompertz parameters as signal
 
-    Plotting each parameter against final titer shows they do — and in an
-    interpretable way. Larger growth **amplitude** and a **later inflection time**
-    (growth sustained for longer before plateauing) both trend toward higher titer,
-    while a very fast early **growth rate** slightly anti-correlates (burn-bright,
-    burn-out). These are the kinds of relationships a process scientist can reason
-    about.
+    The parameters are useful but not the whole story: larger growth amplitude and
+    later inflection tend to align with higher titer, while substrate/byproduct
+    dynamics carry additional information that a single sigmoid cannot express.
     """)
     return
 
@@ -258,6 +286,12 @@ def _(mo):
     register the Gompertz parameters as **custom features** (decorated with
     `@set_domain`) and apply them to VCD — so the growth-curve summary lives inside the
     same feature pipeline as everything else.
+
+    **Substrate/feed accounting.** We also add targeted custom features for glucose,
+    glutamine, ammonia and lactate: initial/final concentration, concentration AUC,
+    matching feed AUC where a feed exists (`W:FeedGlc`, `W:FeedGln`), initial plus
+    total added, approximate net consumed, and normalisations per day and per VCD AUC.
+    Ammonia and lactate are not assumed to be fed.
     """)
     return
 
@@ -282,11 +316,13 @@ def _(mo, plotting):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## 3. Baseline regression (XGBoost)
+    ## 4. Baseline regression (XGBoost)
 
-    We fit a gradient-boosted tree ensemble to predict `log1p(titer)` (the target is
-    positive and right-skewed). Evaluation uses **repeated K-fold cross-validation**,
-    always alongside a **mean-predictor baseline**, so the reported numbers are honest.
+    We fit a gradient-boosted tree ensemble to predict `log1p(titer)`. This helps with
+    right-skew and approximately proportional / heteroskedastic noise, but it does not
+    strictly guarantee non-negative predictions unless the inverse `expm1` output is
+    clipped. Evaluation uses **repeated K-fold cross-validation**, always alongside a
+    **mean-predictor baseline**, so the reported numbers are honest.
     """)
     return
 
@@ -338,11 +374,11 @@ def _(mo):
     ### Out-of-fold predictions
 
     Predicted-vs-actual (left) hugs the diagonal for most runs — CV **R² ≈ 0.80**,
-    far above the mean predictor (~0). The residuals (right) reveal the main
-    weakness: the model **under-predicts the few very high-titer runs**.
+    far above the mean predictor (~0). The model poorly predicts the high-titer
+    regime, which is unfortunate because these are exactly the most interesting
+    experiments from a process-optimization perspective.
 
-    This is the practically important failure mode: the high-titer runs are exactly
-    the **good experiments** we most want to predict well. Two compounding causes: (i)
+    Two compounding causes: (i)
     a small-data effect — very few examples exist in the high-titer regime for the
     trees to learn from; and (ii) tree ensembles **cannot extrapolate** beyond the
     range of the training targets, so they saturate. Mitigations worth exploring:
@@ -366,13 +402,13 @@ def _(mo):
     ### Which features matter?
 
     The gain-based importances are a reassuring sanity check — and a vindication of the
-    TSFEL choice. The top features are **biologically meaningful**: the level and
+    feature-engineering choice. The top features are **biologically meaningful**: the level and
     **area under the curve of VCD** (`tsfel_X:VCD_Area under the curve` is essentially
     the **integral of viable cells**, the classical mechanistic predictor of product),
-    followed by the AUC of lactate, glucose and ammonia and their spread (`Absolute
-    energy`, `Interquartile range`). This is exactly the kind of feature catch22 could
-    **not** provide — its top-ranked features were abstract dynamical descriptors,
-    whereas here the model leans on quantities a process scientist would reach for.
+    followed by substrate/byproduct AUCs, levels, and consumption summaries. This is
+    exactly the kind of feature catch22 could **not** provide — its top-ranked features
+    were abstract dynamical descriptors, whereas here the model leans on quantities a
+    process scientist would reach for.
     """)
     return
 
@@ -387,7 +423,7 @@ def _(X, plotting, y):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## 4. Beyond the baseline — the neural CDE
+    ## 5. Beyond the baseline — the neural CDE
 
     The baseline is strong precisely because this is a small, tabular-friendly
     dataset. The companion **neural CDE** (`titer_prediction.cde`) instead ingests

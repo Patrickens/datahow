@@ -39,23 +39,32 @@ Training set: 100 experiments. Test set: 20 experiments.
    derivative-based and interpolation-based models — a neural CDE, for instance,
    needs a control-path interpolation that respects these jumps.
 
-## Modelling philosophy
+## Modelling strategy
 
-The *ideal* approach for this kind of data is **hybrid modelling**: a
-mechanistic core — an extended metabolic model, or a system of ODEs for cell
-growth, substrate consumption and product formation — in which a few parameters
-(e.g. yield coefficients, specific productivity, growth/death rates) are
-**learnable but human-interpretable**, so we can impose informative priors from
-process knowledge. Such models are data-efficient, extrapolate sensibly, and
-speak the language of process scientists. Fully identifying one is well beyond
-the scope of this challenge, and ~100 experiments are too few to constrain it
-reliably — but it is the direction we would pursue in a realistic, data-rich
-setting, and the neural CDE below sits partway along that mechanistic ↔ black-box
-spectrum.
+The modelling problem is deliberately small and practical: predict **one scalar
+final titer per experiment** from short, variable-length bioprocess trajectories.
+With ~100 training experiments, clean preprocessing, honest validation, and
+reproducible choices matter more than chasing a marginal leaderboard gain.
 
-For this challenge we instead demonstrate two pragmatic points on that spectrum:
+We considered three modelling options:
 
-### 1. Baseline — generic regression on engineered features (XGBoost)
+1. **XGBoost on engineered features.** Fast, strong on small tabular datasets,
+   easy to deploy, and interpretable through feature importance. The tradeoff is
+   that all time dependence has to be engineered manually.
+2. **Neural CDE.** Consumes the full trajectory, handles unequal sampling and
+   missingness naturally, and lets us encode discontinuous controls through the
+   interpolation choice. The tradeoff is lower interpretability and a harder
+   story for biologists.
+3. **Mechanistic ODE with event-driven controls.** The most biologically
+   interpretable option: explicit states, yields, rates, and process events.
+   For this take-home it is too slow to formulate robustly and raises
+   identifiability, event-handling, solver, and misspecification risks.
+
+The practical comparison is therefore **XGBoost versus the neural CDE**. The
+XGBoost model is the dependable small-data baseline; the CDE demonstrates the
+trajectory-native method we would keep developing with more data.
+
+### Feature engineering for XGBoost
 
 Show that the task can be solved **simply and efficiently** with a
 general-purpose regressor. XGBoost is a strong default for small tabular data;
@@ -81,7 +90,17 @@ feature vector we combine:
   including the **area under the curve** (e.g. the integral of viable cells),
   slope, RMS, entropy, and turning points. See *Choosing a feature library*
   below for why TSFEL over tsfresh/catch22.
+- **Substrate/feed-consumption features.** For glucose, glutamine, ammonia, and
+  lactate we add initial/final concentration, concentration AUC, feed AUC where
+  a matching feed exists (`W:FeedGlc`, `W:FeedGln`), initial plus total added,
+  approximate net consumed, and simple normalisations by duration and VCD AUC.
+  Ammonia and lactate are not assumed to be fed.
 - Plus the pass-through `Z:` design scalars and observed duration / length.
+
+The XGBoost target is `log1p(titer)`. This helps with the right-skewed target and
+approximately proportional / heteroskedastic noise, while not strictly
+guaranteeing non-negative predictions unless the inverse `expm1` output is
+clipped.
 
 **Choosing a feature library.** We considered **tsfresh** (conflicts with the
 JAX/diffrax stack via its numba dependency, and emits 200+ features), then tried
@@ -90,7 +109,7 @@ features aren't domain-meaningful; notably no AUC). We settled on **TSFEL**:
 numba-free (one environment), interpretable, includes the bioprocess-relevant
 features we want, and extensible enough to host the Gompertz custom feature.
 
-### 2. Neural Controlled Differential Equation (diffrax)
+### Neural Controlled Differential Equation (diffrax)
 
 A sequence model that ingests the raw trajectories directly: the `W:`/`X:`
 channels form a driving path, a neural CDE integrates along it, and the terminal
@@ -179,10 +198,12 @@ continuous `X:` states):
 
 ![Gompertz fits](figures/gompertz_fits.png)
 
-**Baseline diagnostics** — out-of-fold predictions (the model under-predicts the
-few very high-titer runs) and the feature importances, led by biologically
-meaningful TSFEL features (the **area under the VCD curve** = integral of viable
-cells, plus AUC of lactate/glucose/ammonia):
+**Baseline diagnostics** — out-of-fold predictions and feature importances. The
+model poorly predicts the high-titer regime, which is unfortunate because these
+are exactly the most interesting experiments from a process-optimization
+perspective. The most important features remain biologically meaningful: the
+**area under the VCD curve** = integral of viable cells, plus substrate/byproduct
+level, AUC, and consumption features:
 
 ![Regression CV](figures/regression_cv.png)
 

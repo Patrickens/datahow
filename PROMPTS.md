@@ -304,6 +304,34 @@ commits per step.
   bad payloads → 422; full suite 23 passed; ruff clean. (Docker build pending a
   running daemon.) Delivered as ~11 small commits.
 
+## 12. Final modelling workflow cleanup
+
+**Goal.** Finish Part 1 with explicit reproducibility, biologically motivated
+features, tuned sweep outputs, and a clearer modelling comparison.
+
+**Prompt (refined).**
+> Apply the final modelling workflow plan. Add substrate/feed-consumption features
+> for glucose, glutamine, ammonia and lactate, verifying the real `X:`/`W:` column
+> names and not assuming ammonia or lactate feeds. Make every split,
+> hyperparameter sample, model initialisation, estimator seed and final refit seed
+> explicit, and store those seeds in sweep CSVs and final metadata. Run exactly 20
+> CDE configurations and exactly 10 XGBoost configurations, choose the best
+> validation configuration for each, refit on all training data, and save final
+> artifacts plus metadata. Rewrite the explanation around problem framing, three
+> modelling options, feature engineering, tuned results, consistent CDE notation,
+> and the fact that padding is only a flat batching trick.
+
+**Key decisions taken.**
+- XGBoost now receives targeted bioprocess accounting features in addition to
+  Gompertz, TSFEL, static and meta features; only glucose and glutamine have
+  matching feed channels in the provided data.
+- CDE and XGBoost sweeps use separate explicit seeds for sweep sampling,
+  validation splitting/CV, model or estimator initialisation, and final refits.
+- The written comparison is framed as XGBoost versus CDE, with a mechanistic ODE
+  kept as the interpretable but out-of-scope alternative.
+- `PROMPTS.md` remains the curated AI-use record; local `claude_*.txt` scratch
+  files are ignored and purged from repository history.
+
 <!--
 Template for subsequent entries:
 
