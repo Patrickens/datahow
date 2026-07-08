@@ -97,14 +97,36 @@ hidden state to titer. It handles variable length and irregular sampling
 natively (batches are padded by holding the last observation — a flat,
 zero-contribution tail — so no masking is needed).
 
-**Handling the discontinuous controls (challenge #2).** The control path uses
-**rectilinear (staircase) interpolation**, not linear: linear would fabricate
-ramps across feed on/off switches, misrepresenting the process. Because a
-staircase has zero-duration jumps in real time, we carry real time as a path
-channel and integrate over a strictly-increasing *path parameter* so every jump
-is captured (the rectilinear-CDE approach of Morrill et al., 2021). As expected,
-the CDE lands below the baseline given only ~100 experiments — it illustrates the
-more expressive, data-hungry approach we would scale up in a data-rich setting.
+**Interpolation as an inductive bias (challenge #2).** How we interpolate between
+daily samples is a modelling assumption, chosen per channel group (see
+`make_mixed_cde_path` in `cde.py`):
+
+- `W:` controls → **step** interpolation — feeds and setpoint switches are
+  genuinely discontinuous; linear would fabricate ramps that never happened.
+- `X:` observations → **piecewise linear** — sampled from continuous-ish states, so
+  a staircase would fabricate jumps (this is not a claim the biology is linear).
+- real time → **channel 0**, so the model stays time-aware.
+
+Because a control step has zero duration in real time, we integrate over a
+strictly-increasing *path parameter* `s` (real time rides along as a channel), so a
+jump becomes a finite segment the solver can see. Full rectilinear interpolation of
+everything would be defensible only under an *online-information* reading; for
+offline whole-trajectory regression the mixed convention is the more faithful bias.
+
+**Why a CDE (and not a neural ODE)?** Variable-length and irregularly-sampled
+trajectories are handled natively; order and timing are preserved; discontinuous
+controls are represented without fabricated ramps; and it supports online prediction
+as new measurements extend the path. A neural ODE evolves autonomously and cannot
+ingest the external feeds/observations, whereas the CDE is *driven by the data path*.
+
+**A mechanistic ODE alternative.** A purely mechanistic ODE (explicit growth /
+uptake / byproduct / death / product-formation balances with event handling for the
+feeds) would be scientifically interesting but is out of scope here: it needs
+committed rate laws, nontrivial parameter identification on ~100 short trajectories,
+and careful event handling for the discontinuities. The CDE is a cleaner path-based
+model for ragged controlled trajectories — honestly, a sequence model, not a
+mechanistic simulator. As expected, it lands below the baseline on ~100 experiments;
+its value is methodological.
 
 ## Exploratory data analysis
 
@@ -135,7 +157,8 @@ fed-batch CHO cultures and tends to coincide with higher final titer, so it is a
 genuinely informative feature rather than noise.
 
 **Control inputs** are step-like — the feeds switch on/off — which is exactly why
-the CDE uses rectilinear interpolation:
+the CDE **step-interpolates** the `W:` controls (while linearly interpolating the
+continuous `X:` states):
 
 ![Control trajectories](figures/input_control_timecourses.png)
 
@@ -163,7 +186,7 @@ targets arrive, but the ordering matches expectations.
 | ----- | ---- | ---- | -- | -------- |
 | Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
 | **XGBoost baseline** | **~309** | **~12%** | **~0.80** | repeated 5-fold CV |
-| Neural CDE | ~610 | ~16% | ~0.65 | 20% holdout, 300 epochs |
+| Neural CDE | ~665 | ~17% | ~0.58 | 20% holdout, 300 epochs |
 
 The XGBoost baseline is the stronger model here, as anticipated for a small
 tabular-friendly dataset; the CDE demonstrates the path-based methodology.

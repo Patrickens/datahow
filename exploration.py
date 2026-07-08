@@ -582,12 +582,37 @@ def _(plotting):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ### Why a CDE here?
+
+    For this dataset a controlled DE is a genuinely good fit:
+
+    - **Variable-length trajectories** are handled natively — the model integrates
+      whatever path it is given, no fixed window.
+    - **Irregular / unequal sampling** is fine because *real time is a channel* of the
+      path; the model reads timing directly instead of assuming a fixed step.
+    - **Order and timing are preserved** — unlike the bag-of-features baseline, the CDE
+      respects *when* things happened.
+    - **Discontinuous controls** are represented honestly (step `W:`), without
+      fabricating ramps.
+    - **Online updates** are natural: as new measurements arrive they simply extend the
+      path, so the same model can predict mid-run (the online-prediction setting).
+    - **More appropriate than a neural ODE**, because the process is *externally
+      controlled*. A neural ODE evolves autonomously, $\mathrm{d}z = f_\theta(z)\,
+      \mathrm{d}t$, and cannot ingest the feeds/observations; the CDE's
+      $\mathrm{d}z = f_\theta(z)\,\mathrm{d}C$ is *driven by the data path*.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ### Result
 
-    On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.65),
-    exactly as expected — with so little data the flexible black-box vector field
-    cannot be pinned down. Its value is methodological: it shows the path we would scale
-    up in a data-rich setting.
+    On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.58 on a
+    single 20% split, so noisy), exactly as expected — with so little data the flexible
+    black-box vector field cannot be pinned down. Its value is methodological: it shows
+    the path we would scale up in a data-rich setting.
     """)
     return
 
@@ -631,6 +656,30 @@ def _(mo):
     further along, feature-based ML at the other — is exactly the **hybrid modelling**
     DataHow specialises in. It is out of scope for this challenge and data budget, but it
     is where a production solution would head.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### A mechanistic ODE alternative
+
+    Even without the ML twist, a **purely mechanistic ODE** — the mass balances above,
+    integrated with **event handling** for the discrete feeds and setpoint switches —
+    would be a scientifically interesting alternative, and the natural home for the
+    interpretable parameters. We do not build it here because:
+
+    - it requires committing to explicit rate laws for *every* state (growth, uptake,
+      byproduct formation, death, product formation);
+    - identifying those parameters reliably from ~100 short trajectories is nontrivial;
+    - the discontinuous feeds/switches need careful **event handling** (or discontinuous
+      controls) in the solver;
+    - together these add substantial implementation and explanation complexity.
+
+    For a take-home, the neural CDE is a cleaner path-based model for ragged, externally
+    controlled trajectories — while being honest that it is a **sequence model, not a
+    mechanistic simulator**.
     """)
     return
 
