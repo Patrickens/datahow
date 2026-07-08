@@ -142,7 +142,8 @@ def _(mo):
     for a window and off again, and temperature/pH shift at set days. This is
     challenge #2 made visible — a smooth (linear/spline) interpolation of these
     signals would fabricate ramps that never happened, which is exactly why the
-    neural CDE uses **rectilinear (staircase)** interpolation.
+    neural CDE **step-interpolates the `W:` controls** (while linearly interpolating
+    the continuous `X:` states — see section 4).
     """)
     return
 
@@ -413,18 +414,32 @@ def _(mo):
     - The prediction is a linear readout of the terminal state,
       $\hat{y}=\ell_\theta\!\big(z(T)\big)$.
 
-    **Why this shape fits our data.** Where $X$ is differentiable the integral becomes
-    an ODE,
-    $\tfrac{\mathrm{d}z}{\mathrm{d}t}=f_\theta\!\big(z(t)\big)\,\tfrac{\mathrm{d}X}{\mathrm{d}t}$,
-    solvable by any ODE solver — which is what makes variable-length, irregularly
-    sampled series painless (challenge #1). But our controls are **step-like**, so we
-    build $X$ as a **rectilinear** (piecewise-constant, instantaneous-jump) path and
-    integrate over a strictly-increasing **path parameter** $s$ instead of real time.
-    Over a jump, real time is constant yet $\mathrm{d}X\neq 0$, so the increment
-    $\int f_\theta(z)\,\mathrm{d}X = f_\theta(z)\,\Delta X$ is still captured;
-    integrating in real time would give that jump zero duration and silently drop it
-    (challenge #2). Real time is carried as one channel of $X$ so the model stays
-    time-aware.
+    **Interpolation is an inductive bias.** To turn discrete samples into a path we
+    must *interpolate* — and how we interpolate is a modelling assumption about the
+    process between observations, not a claim about the true biology. We use a
+    **mixed** convention, matched to each channel group:
+
+    - **`W:` controls → step (rectilinear).** Feeds and setpoint switches are
+      genuinely discontinuous; linear interpolation would fabricate ramps that never
+      happened.
+    - **`X:` observations → piecewise linear.** These are sampled from continuous-ish
+      process states, so a staircase would fabricate jumps. Linear is the honest
+      minimal assumption — *not* a claim the biology is exactly linear.
+    - **real time → channel 0**, linearly interpolated, so the model stays time-aware.
+
+    (Full rectilinear interpolation of *everything* would be defensible only under an
+    **online-information** reading — where each new measurement is a jump in our
+    *information*, not in the physical state. We are doing offline whole-trajectory
+    regression, so the mixed convention is the more faithful bias.)
+
+    **Why a path parameter $s$?** A `W:` step has *zero duration in real time*, so an
+    ODE in real time would give it zero measure and silently drop it. Instead we place
+    the knots on a strictly-increasing artificial parameter $s = 0,1,2,\dots$: a control
+    jump becomes a segment of finite length in $s$ (with real time held constant on that
+    segment, since real time is just another channel). Over such a segment $\Delta X \neq
+    0$, so the increment $\int f_\theta(z)\,\mathrm{d}X = f_\theta(z)\,\Delta X$ is
+    captured. This is why `make_mixed_cde_path` builds a *flow* segment (time & `X:` move,
+    `W:` held) followed by a *jump* segment (`W:` moves, time & `X:` held) per interval.
 
     *Concept — why a CDE?* An ordinary neural ODE evolves autonomously,
     $\mathrm{d}z = f_\theta(z)\,\mathrm{d}t$; it cannot ingest an incoming data stream.
@@ -448,18 +463,19 @@ def _(mo):
        standardised `W:`/`X:` measurements. Shorter runs are right-padded by repeating
        the last row, so the padded tail is flat and contributes nothing to the integral.
 
-    2. **Build the rectilinear control path** (`rectilinear_interpolation(idx, ys)`).
-       From the knots we form the **staircase**: between observations the path holds its
-       value, then jumps. This is $X$. *Concept:* the control path is the continuous
-       object the CDE is driven by, and its increments $\mathrm{d}X$ are what enter the
-       integral.
+    2. **Build the mixed control path** (`make_mixed_cde_path(ys, n_w)`). Per interval,
+       a *flow* segment moves real time and the `X:` states linearly while the `W:`
+       controls are held, then a *jump* segment holds time & `X:` and steps the `W:`
+       controls. So `W:` is step-interpolated and `X:` is linear, inside one path $X(s)$.
+       *Concept:* the control path is the continuous object the CDE is driven by, and its
+       increments $\mathrm{d}X$ are what enter the integral.
 
     3. **Integrate over a path parameter, not time** (`s = jnp.arange(...)`,
-       `LinearInterpolation(s, yr)`). Since staircase jumps take zero real time, we
-       re-index the knots by a strictly increasing $s = 0,1,2,\dots$ and treat $X$ as a
-       function of $s$. *Concept — reparametrisation invariance:* a CDE's output depends
-       on the **geometry of the path**, not the speed it is traversed, so integrating in
-       $s$ is legitimate — and it is what lets the solver see the jumps.
+       `LinearInterpolation(s, path)`). The knots sit on a strictly increasing
+       $s = 0,1,2,\dots$; a `W:` jump (zero real-time duration) becomes a finite segment
+       in $s$. *Concept — reparametrisation invariance:* a CDE's output depends on the
+       **geometry of the path**, not the speed it is traversed, so integrating in $s$ is
+       legitimate — and it is what lets the solver see the control jumps.
 
     4. **Initial state from the recipe** (`z0 = self.initial(static)`). The MLP
        $\zeta_\theta$ maps the `Z:` design scalars to $z(s_0)\in\mathbb{R}^{h}$.
