@@ -40,3 +40,6 @@ Thumbs.db
 
 # --- Keep the challenge brief out of the repo too ----------------------------
 *.pdf
+
+# Local prompt scratch files (curated record lives in PROMPTS.md)
+claude_*.txt
