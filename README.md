@@ -117,16 +117,26 @@ hidden state maps to titer. It handles variable length and irregular sampling
 natively (batches are padded by holding the last observation — a flat,
 zero-contribution tail — so no masking is needed).
 
-**What initialises the hidden state.** `z₀ = ζ_θ(Z, C0)` — the static design **and
-the first observation** `C0 = [t0, W(t0), X(t0)]`. Two reasons: (1) `Z:` and `W:`
-overlap heavily — the `W:` trajectories are the feed / pH / temperature recipe
-*unrolled over time* — so for `Z:` we keep only the scalars with **no `W:`
-counterpart**, `Z:Stir` and `Z:DO` (see `STATIC_INIT_COLS`; the planned duration is
-the time channel). (2) A CDE evolves via control *increments* `dC`, which are
-invariant to a constant offset, so the **absolute** initial state (initial VCD and
-substrate levels — strongly predictive) would never reach the model unless injected
-through `C0`. (The XGBoost baseline, by contrast, uses `Z:` and *not* `W:`, so there
-`Z:` is the compact stand-in for the whole control design.)
+**What initialises the hidden state.** The input path is
+`C(s) = [t(s), W(s), X_obs(s)]` in `R^c`, with
+`c = 1 + n_W + n_X`. Static variables `Z` are used only for initialisation:
+`h_0 = ζ_θ(Z, C_0)`, where `C_0 = [t_0, W(t_0), X_obs(t_0)]`. The learned hidden
+state `h(s) in R^d` is not biological; `d` is a capacity hyperparameter tuned in
+the CDE sweep. Small `d` may underfit, while large `d` may overfit.
+
+Two details matter. (1) `Z:` and `W:` overlap heavily, so for `Z` we keep only the
+scalars with **no `W:` counterpart**, `Z:Stir` and `Z:DO`. (2) A CDE evolves via
+control *increments* `dC`, so the absolute initial state would never reach the
+model unless injected through `C_0`.
+
+The model equations are:
+
+```text
+h_0 = zeta_theta(Z, C_0)
+C_0 = [t_0, W(t_0), X_obs(t_0)]
+dh(s) = f_theta(h(s)) dC(s),    f_theta: R^d -> R^(d x c)
+y_hat = ell_theta(h(S))
+```
 
 **Interpolation as an inductive bias (challenge #2).** How we interpolate between
 daily samples is a modelling assumption, chosen per channel group (see

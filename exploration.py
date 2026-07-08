@@ -431,30 +431,36 @@ def _(mo):
 
     ### The math
 
-    A *controlled* differential equation drives a hidden state
-    $z(t)\in\mathbb{R}^{h}$ along a **control path** $X(t)\in\mathbb{R}^{c}$ built by
-    interpolating the observed trajectory:
+    A *controlled* differential equation drives a learned hidden state
+    $h(s)\in\mathbb{R}^{d}$ along an input/control path
+    $C(s)\in\mathbb{R}^{c}$ built by interpolating the observed trajectory:
 
     $$
-    z(t_0) = \zeta_\theta(Z), \qquad
-    z(t) = z(t_0) + \int_{t_0}^{t} f_\theta\!\big(z(\tau)\big)\,\mathrm{d}X(\tau).
+    C(s) = [t(s), W(s), X_{\mathrm{obs}}(s)], \qquad c = 1 + n_W + n_X
     $$
 
-    - The **vector field** $f_\theta:\mathbb{R}^{h}\to\mathbb{R}^{h\times c}$ is a
+    $$
+    h_0 = \zeta_\theta(Z, C_0), \qquad
+    C_0 = [t_0, W(t_0), X_{\mathrm{obs}}(t_0)]
+    $$
+
+    $$
+    \mathrm{d}h(s) = f_\theta(h(s))\,\mathrm{d}C(s), \qquad
+    \hat{y} = \ell_\theta(h(S)).
+    $$
+
+    - The **vector field** $f_\theta:\mathbb{R}^{d}\to\mathbb{R}^{d\times c}$ is a
       neural network mapping the hidden state to a matrix; the integrand
-      $f_\theta(z)\,\mathrm{d}X$ is a matrix–vector product, so the model learns how the
+      $f_\theta(h)\,\mathrm{d}C$ is a matrix–vector product, so the model learns how the
       *rates of change of the inputs* steer the latent state (a Riemann–Stieltjes
       integral).
-    - The initial state is set from the static design **and the first observation**,
-      $z_0 = \zeta_\theta(Z,\, C_0)$ with $C_0 = [t_0, W(t_0), X(t_0)]$. Two subtleties:
-      (i) $Z$ and the `W:` controls **overlap** — the `W:` trajectories are the feed /
-      pH / temperature recipe unrolled over time — so we take for $Z$ only the design
-      scalars with **no `W:` counterpart**, **stirring and dissolved oxygen**
-      (`Z:Stir`, `Z:DO`); (ii) a CDE only ever sees control *increments* $\mathrm{d}C$,
-      so the **absolute** starting state (initial VCD, substrate levels — very
-      informative) is invisible unless injected here via $C_0$.
-    - The prediction is a linear readout of the terminal state,
-      $\hat{y}=\ell_\theta\!\big(z(T)\big)$.
+    - $Z$ denotes static variables used only for initialisation. In code these are the
+      design scalars with **no `W:` counterpart**, **stirring and dissolved oxygen**
+      (`Z:Stir`, `Z:DO`).
+    - $d$ is not a biological dimension; it is a model-capacity hyperparameter. Small
+      $d$ may underfit, while large $d$ may overfit, so it is tuned in the CDE sweep.
+    - $C_0$ matters because a CDE only sees control increments $\mathrm{d}C$, so the
+      absolute initial VCD / substrate levels would otherwise never reach it.
 
     **Interpolation is an inductive bias.** To turn discrete samples into a path we
     must *interpolate* — and how we interpolate is a modelling assumption about the
@@ -478,14 +484,14 @@ def _(mo):
     ODE in real time would give it zero measure and silently drop it. Instead we place
     the knots on a strictly-increasing artificial parameter $s = 0,1,2,\dots$: a control
     jump becomes a segment of finite length in $s$ (with real time held constant on that
-    segment, since real time is just another channel). Over such a segment $\Delta X \neq
-    0$, so the increment $\int f_\theta(z)\,\mathrm{d}X = f_\theta(z)\,\Delta X$ is
+    segment, since real time is just another channel). Over such a segment $\Delta C \neq
+    0$, so the increment $\int f_\theta(h)\,\mathrm{d}C = f_\theta(h)\,\Delta C$ is
     captured. This is why `make_mixed_cde_path` builds a *flow* segment (time & `X:` move,
     `W:` held) followed by a *jump* segment (`W:` moves, time & `X:` held) per interval.
 
     *Concept — why a CDE?* An ordinary neural ODE evolves autonomously,
-    $\mathrm{d}z = f_\theta(z)\,\mathrm{d}t$; it cannot ingest an incoming data stream.
-    A **controlled** DE replaces $\mathrm{d}t$ with $\mathrm{d}X$, so the *data itself*
+    $\mathrm{d}h = f_\theta(h)\,\mathrm{d}t$; it cannot ingest an incoming data stream.
+    A **controlled** DE replaces $\mathrm{d}t$ with $\mathrm{d}C$, so the *data itself*
     drives the dynamics. This is the continuous-time generalisation of an RNN — and
     unlike an RNN it handles irregular sampling and missing data by construction.
     """)
@@ -508,9 +514,9 @@ def _(mo):
     2. **Build the mixed control path** (`make_mixed_cde_path(ys, n_w)`). Per interval,
        a *flow* segment moves real time and the `X:` states linearly while the `W:`
        controls are held, then a *jump* segment holds time & `X:` and steps the `W:`
-       controls. So `W:` is step-interpolated and `X:` is linear, inside one path $X(s)$.
+       controls. So `W:` is step-interpolated and `X:` is linear, inside one path $C(s)$.
        *Concept:* the control path is the continuous object the CDE is driven by, and its
-       increments $\mathrm{d}X$ are what enter the integral.
+       increments $\mathrm{d}C$ are what enter the integral.
 
     3. **Integrate over a path parameter, not time** (`s = jnp.arange(...)`,
        `LinearInterpolation(s, path)`). The knots sit on a strictly increasing
@@ -520,21 +526,21 @@ def _(mo):
        legitimate — and it is what lets the solver see the control jumps.
 
     4. **Initial state from static design + first observation**
-       (`z0 = self.initial(concat([static, ys[0]]))`). The MLP $\zeta_\theta$ maps the
+       (`h0 = self.initial(concat([static, ys[0]]))`). The MLP $\zeta_\theta$ maps the
        no-`W:`-counterpart scalars (`Z:Stir`, `Z:DO`, see `STATIC_INIT_COLS`) **and the
        initial observation** $C_0 = $ `ys[0]` $ = [t_0, W_0, X_0]$ to
-       $z(s_0)\in\mathbb{R}^{h}$. $C_0$ matters because the CDE only sees increments, so
+       $h(s_0)\in\mathbb{R}^{d}$. $C_0$ matters because the CDE only sees increments, so
        the absolute initial VCD / substrate levels would otherwise never reach it.
 
     5. **Define the controlled dynamics** (`ControlTerm(self.func, control)`). `self.func`
-       is $f_\theta$, an MLP returning an $h\times c$ matrix; the term encodes
-       $\mathrm{d}z = f_\theta(z)\,\mathrm{d}X$. *Concept:* the update is a learned
+       is $f_\theta$, an MLP returning a $d\times c$ matrix; the term encodes
+       $\mathrm{d}h = f_\theta(h)\,\mathrm{d}C$. *Concept:* the update is a learned
        **matrix–vector product with the data increment**, not a fixed recurrent cell.
 
     6. **Solve** (`diffeqsolve(term, Heun(), stepsize_controller=StepTo(ts=s))`). We step
        exactly on the knot grid; Heun's method (2nd-order Runge–Kutta) advances
-       $z_{n+1} \approx z_n + f_\theta(z_n)\,\big(X(s_{n+1}) - X(s_n)\big)$ using the
-       solver's control increment $\Delta X$. Stepping on the knots guarantees every jump
+       $h_{n+1} \approx h_n + f_\theta(h_n)\,\big(C(s_{n+1}) - C(s_n)\big)$ using the
+       solver's control increment $\Delta C$. Stepping on the knots guarantees every jump
        is integrated.
 
     7. **Read out** (`self.readout(sol.ys[-1])`). A linear map $\ell_\theta$ turns the
@@ -555,8 +561,8 @@ def _(mo):
     **In brief.**
 
     - **Init:** `Z:` static (`Z:Stir`, `Z:DO`) **and** the first observation
-      $C_0 = [t_0, W_0, X_0]$ initialise the hidden state $z_0$.
-    - **Dynamics:** the path $C(s) = [t(s), W(s), X(s)]$ drives the CDE through its
+      $C_0 = [t_0, W_0, X_{\mathrm{obs},0}]$ initialise the hidden state $h_0$.
+    - **Dynamics:** the path $C(s) = [t(s), W(s), X_{\mathrm{obs}}(s)]$ drives the CDE through its
       increments $\mathrm{d}C$ — `W:` step-interpolated, `X:` and time linear.
     - **Padding** is only for batching: the whole final row *including time* is
       repeated, so the padded tail is flat ($\mathrm{d}C = 0$) and contributes nothing
@@ -662,9 +668,9 @@ def _(mo):
     - **Online updates** are natural: as new measurements arrive they simply extend the
       path, so the same model can predict mid-run (the online-prediction setting).
     - **More appropriate than a neural ODE**, because the process is *externally
-      controlled*. A neural ODE evolves autonomously, $\mathrm{d}z = f_\theta(z)\,
+      controlled*. A neural ODE evolves autonomously, $\mathrm{d}h = f_\theta(h)\,
       \mathrm{d}t$, and cannot ingest the feeds/observations; the CDE's
-      $\mathrm{d}z = f_\theta(z)\,\mathrm{d}C$ is *driven by the data path*.
+      $\mathrm{d}h = f_\theta(h)\,\mathrm{d}C$ is *driven by the data path*.
     """)
     return
 
@@ -714,7 +720,7 @@ def _(mo):
     The neural CDE learns its vector field $f_\theta$ as a **black box**. The natural
     next step is to replace that neural approximation with an **explicit, mechanistic**
     structure and keep only a few parameters learnable — a **hybrid model**. Instead of
-    $\mathrm{d}z = f_\theta(z)\,\mathrm{d}X$ we would write the mass-balance ODEs of the
+    $\mathrm{d}h = f_\theta(h)\,\mathrm{d}C$ we would write the mass-balance ODEs of the
     bioprocess directly, e.g.
 
     $$
