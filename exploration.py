@@ -192,9 +192,9 @@ def _(mo):
     collapse each variable-length trajectory four complementary ways:
 
     1. **Gompertz growth-curve parameters** (this section) — fit to VCD,
-    2. **Substrate/feed-consumption features** — initial/final concentrations, AUCs,
-       matching feed integrals for glucose/glutamine, approximate net consumed, and
-       simple normalisations,
+    2. **Substrate/feed-consumption features** — initial/final concentrations, total
+       feed integral for glucose/glutamine, initial plus fed amount, and apparent
+       consumed amount,
     3. **TSFEL features** — a curated, interpretable set of statistical & temporal
        features per state channel (including the **area under the curve**),
     4. **static + meta** — the pass-through `Z:` design scalars plus the observed
@@ -287,11 +287,10 @@ def _(mo):
     `@set_domain`) and apply them to VCD — so the growth-curve summary lives inside the
     same feature pipeline as everything else.
 
-    **Substrate/feed accounting.** We also add targeted custom features for glucose,
-    glutamine, ammonia and lactate: initial/final concentration, concentration AUC,
-    matching feed AUC where a feed exists (`W:FeedGlc`, `W:FeedGln`), initial plus
-    total added, approximate net consumed, and normalisations per day and per VCD AUC.
-    Ammonia and lactate are not assumed to be fed.
+    **Substrate/feed accounting.** We also add targeted custom features for glucose
+    and glutamine: initial/final concentration, total feed integral (`W:FeedGlc`,
+    `W:FeedGln`), initial plus fed amount, and apparent consumed amount. TSFEL already
+    provides concentration AUCs for the `X:` channels, so we do not duplicate those here.
     """)
     return
 
@@ -405,7 +404,7 @@ def _(mo):
     feature-engineering choice. The top features are **biologically meaningful**: the level and
     **area under the curve of VCD** (`tsfel_X:VCD_Area under the curve` is essentially
     the **integral of viable cells**, the classical mechanistic predictor of product),
-    followed by substrate/byproduct AUCs, levels, and consumption summaries. This is
+    followed by substrate/byproduct AUCs, levels, and feed-accounting summaries. This is
     exactly the kind of feature catch22 could **not** provide — its top-ranked features
     were abstract dynamical descriptors, whereas here the model leans on quantities a
     process scientist would reach for.
@@ -604,10 +603,11 @@ def _(mo):
     while real time is held flat** — a physical discontinuity becomes a segment of
     *finite* length in $s$, which is exactly why the solver can see it.
 
-    Padding is not extra process time. It is only a rectangular-array trick for
-    batching. Because the full final row is repeated, including the real-time channel,
-    the control path is constant on the padded tail: $C(s)=C(S)$ and $\mathrm{d}C=0$.
-    Since $\mathrm{d}h=f_\theta(h)\,\mathrm{d}C$, a pure CDE receives no update there.
+    The gold region on the right is the padded tail used for batching. Padding is not
+    extra process time: because the full final row is repeated, including the real-time
+    channel, the control path is constant there: $C(s)=C(S)$ and $\mathrm{d}C=0$.
+    Since $\mathrm{d}h=f_\theta(h)\,\mathrm{d}C$, a pure CDE receives no update on that
+    flat tail.
     """)
     return
 

@@ -311,8 +311,7 @@ features, tuned sweep outputs, and a clearer modelling comparison.
 
 **Prompt (refined).**
 > Apply the final modelling workflow plan. Add substrate/feed-consumption features
-> for glucose, glutamine, ammonia and lactate, verifying the real `X:`/`W:` column
-> names and not assuming ammonia or lactate feeds. Make every split,
+> for glucose and glutamine, verifying the real `X:`/`W:` column names. Make every split,
 > hyperparameter sample, model initialisation, estimator seed and final refit seed
 > explicit, and store those seeds in sweep CSVs and final metadata. Run exactly 20
 > CDE configurations and exactly 10 XGBoost configurations, choose the best
@@ -322,9 +321,10 @@ features, tuned sweep outputs, and a clearer modelling comparison.
 > and the fact that padding is only a flat batching trick.
 
 **Key decisions taken.**
-- XGBoost now receives targeted bioprocess accounting features in addition to
-  Gompertz, TSFEL, static and meta features; only glucose and glutamine have
-  matching feed channels in the provided data.
+- XGBoost now receives targeted glucose/glutamine feed-accounting features in
+  addition to Gompertz, TSFEL, static and meta features; TSFEL already provides
+  concentration AUCs, so the custom features focus on total fed and apparent
+  consumed amounts.
 - CDE and XGBoost sweeps use separate explicit seeds for sweep sampling,
   validation splitting/CV, model or estimator initialisation, and final refits.
 - The written comparison is framed as XGBoost versus CDE, with a mechanistic ODE

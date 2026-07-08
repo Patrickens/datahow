@@ -90,11 +90,11 @@ feature vector we combine:
   including the **area under the curve** (e.g. the integral of viable cells),
   slope, RMS, entropy, and turning points. See *Choosing a feature library*
   below for why TSFEL over tsfresh/catch22.
-- **Substrate/feed-consumption features.** For glucose, glutamine, ammonia, and
-  lactate we add initial/final concentration, concentration AUC, feed AUC where
-  a matching feed exists (`W:FeedGlc`, `W:FeedGln`), initial plus total added,
-  approximate net consumed, and simple normalisations by duration and VCD AUC.
-  Ammonia and lactate are not assumed to be fed.
+- **Substrate/feed-consumption features.** For glucose and glutamine we add
+  initial/final concentration, total feed integral (`W:FeedGlc`, `W:FeedGln`),
+  initial plus total fed, and apparent consumed amount. TSFEL already provides
+  concentration AUCs for the `X:` channels, so the custom features avoid
+  duplicating those.
 - Plus the pass-through `Z:` design scalars and observed duration / length.
 
 The XGBoost target is `log1p(titer)`. This helps with the right-skewed target and
@@ -218,7 +218,7 @@ model poorly predicts the high-titer regime, which is unfortunate because these
 are exactly the most interesting experiments from a process-optimization
 perspective. The most important features remain biologically meaningful: the
 **area under the VCD curve** = integral of viable cells, plus substrate/byproduct
-level, AUC, and consumption features:
+level, AUC, and feed-accounting features:
 
 ![Regression CV](figures/regression_cv.png)
 

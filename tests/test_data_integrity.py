@@ -117,7 +117,7 @@ def test_channel_aggregates_are_correct(synthetic_long):
     assert features.loc["A", "X:VCD_auc"] == pytest.approx(4.5)
 
 
-def test_substrate_consumption_features_use_matching_feeds_only():
+def test_substrate_consumption_features_add_feed_accounting_only():
     df = pd.DataFrame(
         {
             "Exp": ["A", "A", "A"],
@@ -135,19 +135,18 @@ def test_substrate_consumption_features_use_matching_feeds_only():
     features = feats.substrate_consumption_features(df)
     row = features.loc["A"]
 
-    assert row["bio_X:Glc_feed_auc"] == pytest.approx(2.0)
-    assert row["bio_X:Glc_net_consumed"] == pytest.approx(5.0)
-    assert row["bio_X:Glc_net_consumed_per_day"] == pytest.approx(2.5)
-    assert row["bio_X:Glc_net_consumed_per_vcd_auc"] == pytest.approx(1.25)
+    assert row["bio_X:Glc_total_fed"] == pytest.approx(2.0)
+    assert row["bio_X:Glc_initial_plus_fed"] == pytest.approx(12.0)
+    assert row["bio_X:Glc_apparent_consumed"] == pytest.approx(5.0)
 
-    assert row["bio_X:Gln_feed_auc"] == pytest.approx(1.5)
-    assert row["bio_X:Gln_net_consumed"] == pytest.approx(3.5)
+    assert row["bio_X:Gln_total_fed"] == pytest.approx(1.5)
+    assert row["bio_X:Gln_initial_plus_fed"] == pytest.approx(4.5)
+    assert row["bio_X:Gln_apparent_consumed"] == pytest.approx(3.5)
 
-    assert "bio_X:Amm_feed_auc" not in features.columns
-    assert "bio_X:Lac_feed_auc" not in features.columns
-    assert row["bio_X:Amm_initial_plus_added"] == pytest.approx(0.0)
-    assert row["bio_X:Amm_net_consumed"] == pytest.approx(-4.0)
-    assert row["bio_X:Lac_net_consumed"] == pytest.approx(0.5)
+    assert "bio_X:Glc_auc" not in features.columns
+    assert "bio_X:Glc_apparent_consumed_per_day" not in features.columns
+    assert not any(col.startswith("bio_X:Amm") for col in features.columns)
+    assert not any(col.startswith("bio_X:Lac") for col in features.columns)
 
 
 def _write_synthetic(synthetic_long, tmp_path):

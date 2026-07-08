@@ -16,10 +16,9 @@ combining three complementary views of each variable-length trajectory:
    *cannot* capture sequential substrate dynamics (ordered glucose-then-glutamine
    depletion, feed-driven replenishment, or the lactate production->consumption
    switch); those are left to the TSFEL features and the CDE.
-4. **Substrate / byproduct accounting features** — small, biologically motivated
-   summaries for glucose, glutamine, ammonia and lactate: initial/final level,
-   concentration AUC, matching feed AUC where present, and approximate net
-   consumed/produced quantities normalised by duration and viable-cell exposure.
+4. **Substrate feed-accounting features** — small, biologically motivated
+   summaries for the fed substrates glucose and glutamine: initial/final level,
+   total feed integral, initial plus fed amount, and apparent amount consumed.
 
 On the feature-library choice: we considered **tsfresh** but it conflicts with
 the JAX/diffrax stack (its numba/stumpy dependency pins an incompatible numpy)
@@ -49,7 +48,7 @@ from . import schema
 # ---------------------------------------------------------------------------
 GOMPERTZ_PARAMS: tuple[str, ...] = ("a", "b", "t_i", "k_g", "y0")
 GOMPERTZ_VCD_CHANNEL = "X:VCD"
-BIOPROCESS_CHANNELS: tuple[str, ...] = ("X:Glc", "X:Gln", "X:Amm", "X:Lac")
+FED_SUBSTRATE_CHANNELS: tuple[str, ...] = ("X:Glc", "X:Gln")
 MATCHING_FEEDS: dict[str, str] = {
     "X:Glc": "W:FeedGlc",
     "X:Gln": "W:FeedGln",
@@ -311,57 +310,42 @@ def _auc(time: np.ndarray, values: np.ndarray) -> float:
 
 def substrate_consumption_features(
     df: pd.DataFrame,
-    channels: tuple[str, ...] = BIOPROCESS_CHANNELS,
+    channels: tuple[str, ...] = FED_SUBSTRATE_CHANNELS,
     feed_map: dict[str, str] = MATCHING_FEEDS,
 ) -> pd.DataFrame:
     """Biologically motivated concentration/feed features for XGBoost.
 
-    Feed-derived quantities are included only when a matching ``W:`` feed column
-    exists. In the provided data this applies to glucose and glutamine; ammonia
-    and lactate are byproducts with no feed channel, so their ``total_added`` is
-    zero and no feed-AUC feature is emitted.
+    TSFEL already provides concentration AUCs for the ``X:`` channels, so this
+    custom feature family only adds feed-accounting quantities that combine a
+    measured concentration with its matching ``W:`` feed. In the provided data
+    this applies to glucose and glutamine.
     """
     rows: dict[str, dict[str, float]] = {}
     for exp, group in df.groupby(schema.EXP_COL, sort=False):
         group = group.sort_values(schema.TIME_COL)
         time = group[schema.TIME_COL].to_numpy(dtype=float)
-        duration = float(time[-1] - time[0]) if time.size >= 2 else np.nan
-        vcd_auc = _auc(time, group[GOMPERTZ_VCD_CHANNEL].to_numpy(dtype=float))
 
         feat: dict[str, float] = {}
         for channel in channels:
             if channel not in group:
                 continue
+            feed_col = feed_map.get(channel)
+            if feed_col is None or feed_col not in group.columns:
+                continue
+
             values = group[channel].to_numpy(dtype=float)
             initial = float(values[0]) if values.size else np.nan
             final = float(values[-1]) if values.size else np.nan
-            concentration_auc = _auc(time, values)
-
-            feed_col = feed_map.get(channel)
-            has_feed = feed_col in group.columns if feed_col else False
-            feed_auc = (
-                _auc(time, group[feed_col].to_numpy(dtype=float))
-                if has_feed and feed_col is not None
-                else 0.0
-            )
-            total_added = feed_auc
-            initial_plus_added = initial + total_added
-            net_consumed = initial_plus_added - final
+            total_fed = _auc(time, group[feed_col].to_numpy(dtype=float))
+            initial_plus_fed = initial + total_fed
+            apparent_consumed = initial_plus_fed - final
 
             prefix = f"bio_{channel}"
             feat[f"{prefix}_initial"] = initial
             feat[f"{prefix}_final"] = final
-            feat[f"{prefix}_auc"] = concentration_auc
-            if has_feed:
-                feat[f"{prefix}_feed_auc"] = feed_auc
-            feat[f"{prefix}_initial_plus_added"] = initial_plus_added
-            feat[f"{prefix}_net_consumed"] = net_consumed
-            feat[f"{prefix}_net_consumed_per_day"] = (
-                net_consumed / duration if np.isfinite(duration) and duration > 0 else np.nan
-            )
-            feat[f"{prefix}_net_consumed_per_vcd_auc"] = (
-                net_consumed / vcd_auc if np.isfinite(vcd_auc) and abs(vcd_auc) > 1e-12 else np.nan
-            )
+            feat[f"{prefix}_total_fed"] = total_fed
+            feat[f"{prefix}_initial_plus_fed"] = initial_plus_fed
+            feat[f"{prefix}_apparent_consumed"] = apparent_consumed
         rows[exp] = feat
 
     out = pd.DataFrame.from_dict(rows, orient="index")

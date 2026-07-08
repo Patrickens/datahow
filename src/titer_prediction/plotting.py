@@ -17,6 +17,7 @@ import pandas as pd
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from sklearn.model_selection import KFold, cross_val_predict
 
 from . import data_preprocessing as dp
@@ -279,14 +280,16 @@ def _toy_cde_path():
     t = np.array([0.0, 1, 2, 3, 4, 5])
     w = np.array([0.0, 0, 5, 5, 0, 0])  # feed: switches on at day 2, off at day 4
     x = np.array([1.0, 2, 4, 6, 7, 7.5])  # a continuous-ish state
-    ys = np.column_stack([t, w, x]).astype(np.float32)
+    real = np.column_stack([t, w, x]).astype(np.float32)
+    ys = np.vstack([real, np.repeat(real[-1:], 3, axis=0)])
     s, path = cde.make_mixed_cde_path(ys, n_w=1)
-    return t, w, x, np.asarray(s), np.asarray(path)
+    padding_start_s = np.asarray(s)[2 * len(real) - 2]
+    return t, w, x, np.asarray(s), np.asarray(path), float(padding_start_s)
 
 
 def plot_interpolation_comparison():
     """Toy feed control: linear interpolation fabricates ramps; step does not."""
-    t, w, _, _, _ = _toy_cde_path()
+    t, w, _, _, _, _ = _toy_cde_path()
     fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
     tt = np.linspace(t.min(), t.max(), 400)
     ax.plot(
@@ -305,7 +308,7 @@ def plot_interpolation_comparison():
 
 def plot_path_parameter():
     """Real time t(s) and control W(s) against the artificial path parameter s."""
-    _, _, _, s, path = _toy_cde_path()
+    _, _, _, s, path, padding_start_s = _toy_cde_path()
     time_s, w_s = path[:, 0], path[:, 1]
     fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True, constrained_layout=True)
     axes[0].plot(s, time_s, "-o", color="#2ca02c")
@@ -316,12 +319,32 @@ def plot_path_parameter():
     for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
         for ax in axes:
             ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
+    for ax in axes:
+        ax.axvspan(padding_start_s, s[-1], color="#ffbf00", alpha=0.18)
+        ax.axvline(padding_start_s, color="#8c6d1f", lw=1, ls=":")
+    axes[0].text(
+        padding_start_s,
+        time_s[-1],
+        " flat padding\n C(s)=C(S)",
+        ha="left",
+        va="top",
+        fontsize=8,
+        color="#6b5500",
+    )
+    axes[1].legend(
+        handles=[
+            Patch(facecolor="#1f77b4", alpha=0.15, label="control-jump segment"),
+            Patch(facecolor="#ffbf00", alpha=0.18, label="flat padded tail"),
+        ],
+        fontsize=8,
+        loc="best",
+    )
     return fig
 
 
 def plot_cde_toy_state():
     """Toy hidden state under a fixed field: it updates on flows AND control jumps."""
-    _, _, _, s, path = _toy_cde_path()
+    _, _, _, s, path, padding_start_s = _toy_cde_path()
     # A trivial constant vector field f, so dh = f . dC(s) (a linear CDE).
     f = np.array([0.2, 0.5, 0.3])  # weights on [time, W, X] increments
     dh = np.diff(path, axis=0) @ f
@@ -332,11 +355,12 @@ def plot_cde_toy_state():
     ax.plot(s, h, "-o", color="#9467bd")
     for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
         ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
+    ax.axvspan(padding_start_s, s[-1], color="#ffbf00", alpha=0.18)
     ax.set(
         xlabel="path parameter s",
         ylabel="toy hidden state h(s)",
         title="Hidden state updates on time increments AND control jumps\n"
-        "(shaded = control-jump segments)",
+        "(blue shaded = control jumps; gold shaded = flat padding)",
     )
     return fig
 
