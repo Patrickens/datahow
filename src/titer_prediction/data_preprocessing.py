@@ -5,8 +5,9 @@ Two representations are produced from the same parsed source:
 * **Tabular features** (one row per experiment) for the XGBoost baseline. Each
   variable-length trajectory is collapsed into a fixed set of aggregate
   statistics, alongside the pass-through ``Z:`` design scalars.
-* **Padded sequences** (experiments x time x channels) for the neural CDE,
-  together with a validity mask and the per-step times.
+* **Ragged sequences** (one record per experiment) for the neural CDE. Padding,
+  standardisation, and path interpolation are intentionally left to the CDE
+  module, which uses diffrax rather than re-implementing them here.
 
 Run as a CLI to materialise the tabular features to disk::
 
@@ -59,29 +60,27 @@ class TabularDataset:
 
 
 @dataclass
-class SequenceDataset:
-    """Padded sequence tensors for path-based models (the neural CDE).
+class ExperimentSequence:
+    """One experiment's raw, *ragged* trajectory for path-based models.
+
+    Deliberately unpadded: batching, standardisation, and path interpolation are
+    left to the CDE module, which uses diffrax utilities
+    (:func:`diffrax.rectilinear_interpolation`) rather than re-implementing them
+    here.
 
     Attributes:
-        exp_ids: Experiment ids, one per sample (length ``n``).
-        times: ``(n, t_max)`` per-step times in days; padded steps repeat the
-            last real time so the path stays constant after the experiment ends.
-        channels: ``(n, t_max, c)`` control + state values over time.
-        static: ``(n, s)`` the ``Z:`` design scalars.
-        mask: ``(n, t_max)`` boolean, ``True`` for real (non-padded) steps.
-        channel_names: Names of the ``c`` channel columns, in order.
-        static_names: Names of the ``s`` static columns, in order.
-        targets: ``(n,)`` final titer, or ``None`` if unavailable.
+        exp_id: Experiment id.
+        times: ``(t,)`` observation times in days (strictly increasing).
+        channels: ``(t, c)`` control + state values over time.
+        static: ``(s,)`` the ``Z:`` design scalars.
+        target: Final titer, or ``None`` if unavailable.
     """
 
-    exp_ids: list[str]
+    exp_id: str
     times: np.ndarray
     channels: np.ndarray
     static: np.ndarray
-    mask: np.ndarray
-    channel_names: list[str]
-    static_names: list[str]
-    targets: np.ndarray | None
+    target: float | None
 
 
 # ---------------------------------------------------------------------------
@@ -229,60 +228,61 @@ def build_tabular_dataset(
 # ---------------------------------------------------------------------------
 # Sequence building (path-based / CDE)
 # ---------------------------------------------------------------------------
-def build_sequence_dataset(
-    data_path: str | Path, targets_path: str | Path | None = None
-) -> SequenceDataset:
-    """Build padded sequence tensors for path-based models (the neural CDE).
+@dataclass
+class SequenceData:
+    """A collection of ragged experiment trajectories plus their column order."""
 
-    Sequences are right-padded to the longest experiment. Padded time steps
-    repeat the final real time and final channel values, so a CDE integrating
-    over the padded region sees a constant (zero-derivative) path and the
-    terminal hidden state is unaffected. The ``mask`` records which steps are
-    real.
+    experiments: list[ExperimentSequence]
+    channel_names: list[str]
+    static_names: list[str]
+
+    def __len__(self) -> int:
+        return len(self.experiments)
+
+    @property
+    def has_targets(self) -> bool:
+        return all(exp.target is not None for exp in self.experiments)
+
+
+def build_sequences(
+    data_path: str | Path, targets_path: str | Path | None = None
+) -> SequenceData:
+    """Extract one ragged :class:`ExperimentSequence` per experiment.
+
+    No padding, masking, or interpolation is done here — those are the CDE's
+    concern and are delegated to diffrax. Channels are the ``W:`` controls
+    followed by the ``X:`` states; static features are the ``Z:`` scalars.
     """
     df = read_inputs(data_path)
     channel_names = schema.control_columns(df) + schema.state_columns(df)
     static_names = schema.static_columns(df)
 
-    groups = list(df.groupby(schema.EXP_COL, sort=False))
-    exp_ids = [str(exp) for exp, _ in groups]
-    t_max = max(len(g) for _, g in groups)
-    n, c, s = len(groups), len(channel_names), len(static_names)
-
-    times = np.zeros((n, t_max), dtype=float)
-    channels = np.zeros((n, t_max, c), dtype=float)
-    static = np.zeros((n, s), dtype=float)
-    mask = np.zeros((n, t_max), dtype=bool)
-
-    for i, (_, group) in enumerate(groups):
-        group = group.sort_values(schema.TIME_COL)
-        length = len(group)
-        t = group[schema.TIME_COL].to_numpy(dtype=float)
-
-        times[i, :length] = t
-        times[i, length:] = t[-1]  # hold last time on the padded tail
-        channels[i, :length, :] = group[channel_names].to_numpy(dtype=float)
-        if length < t_max:
-            channels[i, length:, :] = channels[i, length - 1, :]
-        static[i, :] = group[static_names].iloc[0].to_numpy(dtype=float)
-        mask[i, :length] = True
-
-    targets: np.ndarray | None = None
+    targets: pd.Series | None = None
     if targets_path is not None:
-        target_series = read_targets(targets_path).reindex(exp_ids)
-        if target_series.isna().any():
-            raise ValueError("Some experiments are missing a target value.")
-        targets = target_series.to_numpy(dtype=float)
+        targets = read_targets(targets_path)
 
-    return SequenceDataset(
-        exp_ids=exp_ids,
-        times=times,
-        channels=channels,
-        static=static,
-        mask=mask,
+    experiments: list[ExperimentSequence] = []
+    for exp, group in df.groupby(schema.EXP_COL, sort=False):
+        group = group.sort_values(schema.TIME_COL)
+        target: float | None = None
+        if targets is not None:
+            if exp not in targets.index:
+                raise ValueError(f"Experiment {exp!r} has no target value.")
+            target = float(targets.loc[exp])
+        experiments.append(
+            ExperimentSequence(
+                exp_id=str(exp),
+                times=group[schema.TIME_COL].to_numpy(dtype=float),
+                channels=group[channel_names].to_numpy(dtype=float),
+                static=group[static_names].iloc[0].to_numpy(dtype=float),
+                target=target,
+            )
+        )
+
+    return SequenceData(
+        experiments=experiments,
         channel_names=channel_names,
         static_names=static_names,
-        targets=targets,
     )
 
 

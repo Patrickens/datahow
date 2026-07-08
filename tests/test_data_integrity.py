@@ -90,16 +90,45 @@ def test_channel_aggregates_are_correct(synthetic_long):
     assert features.loc["A", "X:VCD_auc"] == pytest.approx(4.5)
 
 
-def test_sequences_are_padded_with_mask(synthetic_long, tmp_path):
+def _write_synthetic(synthetic_long, tmp_path):
     csv = tmp_path / "inputs.csv"
     synthetic_long.to_csv(csv, index=False)
-    seq = dp.build_sequence_dataset(csv)
-    # Padded to the longest experiment (3 steps).
-    assert seq.channels.shape[1] == 3
-    assert seq.mask[0].tolist() == [True, True, True]  # Exp A: full
-    assert seq.mask[1].tolist() == [True, True, False]  # Exp B: last step padded
-    # Padded step holds the last real value and time.
-    assert seq.times[1, 2] == seq.times[1, 1]
+    targets = pd.DataFrame({"Exp": ["A", "B"], "Time[day]": [2, 1], "Y:Titer": [100.0, 50.0]})
+    targets_csv = tmp_path / "targets.csv"
+    targets.to_csv(targets_csv, index=False)
+    return csv, targets_csv
+
+
+def test_sequences_are_ragged_and_unpadded(synthetic_long, tmp_path):
+    csv, targets_csv = _write_synthetic(synthetic_long, tmp_path)
+
+    seq = dp.build_sequences(csv, targets_csv)
+    assert len(seq) == 2
+    assert seq.channel_names == ["W:temp", "X:VCD"]
+    # Ragged: experiments keep their own (unpadded) lengths.
+    a, b = seq.experiments
+    assert a.exp_id == "A" and a.times.tolist() == [0.0, 1.0, 2.0]
+    assert b.exp_id == "B" and b.times.tolist() == [0.0, 1.0]
+    assert a.channels.shape == (3, 2)
+    assert a.target == 100.0
+    assert seq.has_targets
+
+
+def test_cde_build_arrays_pads_flat_tail(synthetic_long, tmp_path):
+    # Imported lazily so the JAX/diffrax stack is only loaded for this test.
+    from titer_prediction import cde
+
+    csv, targets_csv = _write_synthetic(synthetic_long, tmp_path)
+    seq = dp.build_sequences(csv, targets_csv)
+    standardizer = cde.fit_standardizer(seq)
+    ys, static, targets = cde.build_arrays(seq, standardizer)
+
+    n, t_max, c = ys.shape
+    assert (n, t_max, c) == (2, 3, 3)  # 2 exps, padded to 3 steps, time + 2 channels
+    # Exp B (length 2) has its final step held over the padded tail -> flat.
+    np.testing.assert_allclose(ys[1, 2], ys[1, 1])
+    assert static.shape == (2, 1)
+    assert targets is not None and targets.shape == (2,)
 
 
 # ---------------------------------------------------------------------------

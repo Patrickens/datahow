@@ -4,9 +4,9 @@ Predict the **final product titer** of a simulated upstream mAb bioprocess from
 per-experiment time-series data, and (Part 2) serve the model behind a REST
 inference API.
 
-> Status: **work in progress.** Scaffold and data-preprocessing module are in
-> place and verified against the provided CSVs. Regression (XGBoost) and neural
-> CDE (diffrax) modules, plus the inference server, are the next steps.
+> Status: **work in progress.** Part 1 is functional end-to-end — preprocessing,
+> the XGBoost baseline, and the neural CDE all train and predict from the CLI and
+> are benchmarked below. The Part 2 inference server is the next step.
 
 ## Problem understanding
 
@@ -81,12 +81,35 @@ feature vector we combine:
 ### 2. Neural Controlled Differential Equation (diffrax)
 
 A sequence model that ingests the raw trajectories directly: it treats the `Z:`
-parameters as static context and the `W:`/`X:` channels as a driving path,
-integrates a neural CDE to the final time, and maps the terminal hidden state to
-titer. It handles variable length and irregular sampling natively and can
-represent the discontinuous controls through its control path. Expected to be at
-best on par with the baseline given the data size, but representative of the more
-expressive, data-hungry approach.
+parameters as static context (initialising the hidden state) and the `W:`/`X:`
+channels as a driving path, integrates a neural CDE, and maps the terminal
+hidden state to titer. It handles variable length and irregular sampling
+natively (batches are padded by holding the last observation — a flat,
+zero-contribution tail — so no masking is needed).
+
+**Handling the discontinuous controls (challenge #2).** The control path uses
+**rectilinear (staircase) interpolation**, not linear: linear would fabricate
+ramps across feed on/off switches, misrepresenting the process. Because a
+staircase has zero-duration jumps in real time, we carry real time as a path
+channel and integrate over a strictly-increasing *path parameter* so every jump
+is captured (the rectilinear-CDE approach of Morrill et al., 2021). As expected,
+the CDE lands below the baseline given only ~100 experiments — it illustrates the
+more expressive, data-hungry approach we would scale up in a data-rich setting.
+
+## Results (cross-validated / held-out)
+
+Errors are in titer units; the baseline is benchmarked with repeated 5-fold CV
+and the CDE with a 20% validation holdout. Numbers will shift once the real test
+targets arrive, but the ordering matches expectations.
+
+| Model | RMSE | MAPE | R² | Protocol |
+| ----- | ---- | ---- | -- | -------- |
+| Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
+| **XGBoost baseline** | **~308** | **~12%** | **~0.82** | repeated 5-fold CV |
+| Neural CDE | ~610 | ~16% | ~0.65 | 20% holdout, 300 epochs |
+
+The XGBoost baseline is the stronger model here, as anticipated for a small
+tabular-friendly dataset; the CDE demonstrates the path-based methodology.
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
 > criterion** for this challenge; clarity of preprocessing, evaluation,
@@ -104,9 +127,11 @@ datahow/
 ├── data/                   # provided CSVs — git-ignored (see below)
 ├── artifacts/              # generated features / trained models — git-ignored
 ├── src/titer_prediction/
-│   ├── data_preprocessing.py   # long CSV -> per-experiment features (CLI)
-│   ├── regression.py           # XGBoost baseline (CLI)            [next]
-│   └── cde.py                  # neural CDE via diffrax (CLI)      [next]
+│   ├── schema.py               # Z:/W:/X: prefix conventions + column groups
+│   ├── data_preprocessing.py   # raw CSV -> tabular features + ragged sequences
+│   ├── features.py             # baseline features: Gompertz + catch22 + aggregates
+│   ├── regression.py           # XGBoost baseline, CV, CLI
+│   └── cde.py                  # neural CDE via diffrax, CLI
 └── tests/
     └── test_data_integrity.py  # single project-wide test file
 ```
@@ -130,6 +155,22 @@ uv run titer-preprocess \
     --data data/datahow_interview_train_data.csv \
     --targets data/datahow_interview_train_targets.csv \
     --out artifacts/train_features.parquet
+
+# Train the XGBoost baseline (repeated-CV report + saved model bundle)
+uv run titer-regression train \
+    --data data/datahow_interview_train_data.csv \
+    --targets data/datahow_interview_train_targets.csv \
+    --model artifacts/xgb_baseline.joblib
+
+# Train the neural CDE
+uv run titer-cde train \
+    --data data/datahow_interview_train_data.csv \
+    --targets data/datahow_interview_train_targets.csv \
+    --model artifacts/cde.eqx
+
+# Predict on new inputs with either model (same CSV output format)
+uv run titer-regression predict --data data/datahow_interview_test_data.csv \
+    --model artifacts/xgb_baseline.joblib --out artifacts/test_predictions.csv
 ```
 
 ## Data confidentiality

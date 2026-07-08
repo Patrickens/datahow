@@ -106,6 +106,50 @@ challenges, and pin down the feature-engineering approach for the baseline.
 - Baseline features are now: **Gompertz(VCD) params + catch22 per channel + `Z:`
   scalars + simple aggregates**, feeding XGBoost.
 
+## 4. Neural CDE + preprocessing refactor
+
+**Goal.** Build the neural CDE, and remove hand-rolled logic that diffrax
+already provides.
+
+**Prompt (refined).**
+> Build cde.py now with a rectilinear control path — rectilinear for the feed
+> switches specifically, since linear interpolation makes no physical sense
+> across on/off events. Also review data_preprocessing: use diffrax/JAX
+> functionality where possible; it feels like a lot was double-implemented there.
+
+**Key decisions taken.**
+- Interpolation: **rectilinear (staircase)** to respect discontinuous feeds.
+  Because staircase jumps have zero duration in real time, integrate over a
+  strictly-increasing **path parameter** and carry real time as a path channel
+  (Morrill et al. 2021), so `ControlTerm` (not `.to_ode()`) + `StepTo` capture
+  every jump. Verified empirically that `.to_ode()` silently drops the jumps.
+- Refactored `data_preprocessing`: removed the hand-rolled padded `SequenceDataset`
+  (padding, masks, hold-last-value) — which also wrongly repeated timestamps and
+  would break `LinearInterpolation`. Replaced with a lean **ragged**
+  `build_sequences` / `ExperimentSequence`; padding/standardisation/interpolation
+  now live in `cde.py` and lean on diffrax.
+- Static `Z:` scalars initialise the CDE hidden state; batches padded by holding
+  the last observation (flat, zero-contribution tail) — no mask needed.
+- Persistence via `eqx.tree_serialise_leaves` + a pickled metadata header
+  (joblib/pickle of equinox modules is unreliable).
+
+## 5. marimo exploration notebook + README figures
+
+**Goal.** A visual walk-through of data, preprocessing, and the baseline, with
+figures saved for the README.
+
+**Prompt (refined).**
+> Make a marimo notebook that (1) plots the input time courses (VCD, substrates,
+> products, controls) as logically grouped overlay subplots — combine components
+> where it makes sense rather than one plot each — and saves them for the README;
+> (2) walks through preprocessing (Gompertz fits, feature extraction); and (3)
+> the regression, with plots useful for the README.
+
+**Key decisions taken.**
+- (recorded as implemented) Plotting helpers factored into an importable module
+  so both the marimo notebook and a headless figure-generation step share them
+  (DRY); figures saved to a committed `assets/` folder for the README.
+
 <!--
 Template for subsequent entries:
 
