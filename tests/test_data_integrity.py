@@ -185,6 +185,31 @@ def test_make_mixed_cde_path():
     np.testing.assert_allclose(path[-1], path[-2])
 
 
+def test_cde_prediction_is_padding_invariant():
+    # A flat padded tail must not change the prediction: dC = 0 there.
+    import jax
+    import jax.numpy as jnp
+
+    from titer_prediction import cde
+
+    model = cde.NeuralCDE(
+        n_static=2, n_channels=3, n_w=1, hidden_size=4, width=8, depth=1,
+        key=jax.random.PRNGKey(0),
+    )
+    ys = jnp.array(
+        [[0.0, 0.0, 1.0], [1.0, 0.0, 2.0], [2.0, 5.0, 3.0], [3.0, 5.0, 3.5]],
+        dtype=jnp.float32,
+    )
+    static = jnp.array([0.3, -0.2], dtype=jnp.float32)
+
+    pred = float(model(ys, static))
+    # Append extra copies of the final row -> a longer but still-flat tail.
+    ys_padded = jnp.concatenate([ys, jnp.repeat(ys[-1:], 3, axis=0)], axis=0)
+    pred_padded = float(model(ys_padded, static))
+
+    assert np.isclose(pred, pred_padded, atol=1e-4)
+
+
 # ---------------------------------------------------------------------------
 # Integrity checks against the real (confidential) data
 # ---------------------------------------------------------------------------

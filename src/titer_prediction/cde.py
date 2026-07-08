@@ -159,7 +159,10 @@ def build_arrays(
     for i, m in enumerate(matrices):
         length = m.shape[0]
         ys[i, :length] = m
-        ys[i, length:] = m[-1]  # hold last observation -> flat tail
+        # Repeat the *entire* last row, including the real-time channel (col 0), so
+        # the padded tail is flat: C(s) = C(s_end) => dC = 0 there, and it
+        # contributes nothing to the CDE integral (padding is only for batching).
+        ys[i, length:] = m[-1]
 
     static_matrix, _ = _static_matrix(seq)
     static = standardizer.norm_static(static_matrix).astype(np.float32)
