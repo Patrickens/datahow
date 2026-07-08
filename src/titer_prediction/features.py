@@ -87,9 +87,7 @@ def fit_gompertz(t: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, bool]:
 
         if cut > 0:
             design = np.column_stack((np.ones(cut + 1), t[: cut + 1]))
-            slope = np.linalg.lstsq(
-                design, np.log(y[: cut + 1] - y0_est + 1e-3), rcond=None
-            )[0][1]
+            slope = np.linalg.lstsq(design, np.log(y[: cut + 1] - y0_est + 1e-3), rcond=None)[0][1]
         else:
             slope = 0.01
 
@@ -175,8 +173,7 @@ def gompertz_features(df: pd.DataFrame, channel: str = GOMPERTZ_VCD_CHANNEL) -> 
         signal = group[channel].to_numpy(dtype=float)
 
         feat = {
-            f"gompertz_{channel}_{name}": fn(signal)
-            for name, fn in GOMPERTZ_TSFEL_FEATURES.items()
+            f"gompertz_{channel}_{name}": fn(signal) for name, fn in GOMPERTZ_TSFEL_FEATURES.items()
         }
         feat[f"gompertz_{channel}_r2"] = gompertz_r2(signal)
         feat[f"gompertz_{channel}_ok"] = float(_gompertz_fit_for(signal)[1])

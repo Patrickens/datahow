@@ -49,6 +49,12 @@ src = ["src", "tests"]
 # Sensible default rule set: pyflakes, pycodestyle, isort, bugbear, pyupgrade.
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# marimo renders a cell's output as its last bare expression (e.g. `fig`); that
+# is the notebook idiom, not a dead statement. Long lines are markdown prose in
+# mo.md(...) cells (tables, formulae) that should not be hard-wrapped.
+"exploration.py" = ["B018", "E501"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

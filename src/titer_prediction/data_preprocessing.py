@@ -64,9 +64,8 @@ class ExperimentSequence:
     """One experiment's raw, *ragged* trajectory for path-based models.
 
     Deliberately unpadded: batching, standardisation, and path interpolation are
-    left to the CDE module, which uses diffrax utilities
-    (:func:`diffrax.rectilinear_interpolation`) rather than re-implementing them
-    here.
+    left to the CDE module (see :func:`titer_prediction.cde.make_mixed_cde_path`)
+    rather than re-implementing them here.
 
     Attributes:
         exp_id: Experiment id.
@@ -244,9 +243,7 @@ class SequenceData:
         return all(exp.target is not None for exp in self.experiments)
 
 
-def build_sequences(
-    data_path: str | Path, targets_path: str | Path | None = None
-) -> SequenceData:
+def build_sequences(data_path: str | Path, targets_path: str | Path | None = None) -> SequenceData:
     """Extract one ragged :class:`ExperimentSequence` per experiment.
 
     No padding, masking, or interpolation is done here — those are the CDE's

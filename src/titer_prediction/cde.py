@@ -135,9 +135,9 @@ def build_arrays(
         ys[i, :length] = m
         ys[i, length:] = m[-1]  # hold last observation -> flat tail
 
-    static = np.stack(
-        [standardizer.norm_static(e.static) for e in seq.experiments]
-    ).astype(np.float32)
+    static = np.stack([standardizer.norm_static(e.static) for e in seq.experiments]).astype(
+        np.float32
+    )
 
     targets = None
     if seq.has_targets:
@@ -311,9 +311,15 @@ def train(
     val_idx, train_idx = perm[:n_val], perm[n_val:]
 
     config = {
-        "hidden_size": hidden_size, "width": width, "depth": depth,
-        "epochs": epochs, "lr": lr, "val_frac": val_frac, "seed": seed,
-        "n_channels": int(ys_np.shape[2]), "n_static": int(static_np.shape[1]),
+        "hidden_size": hidden_size,
+        "width": width,
+        "depth": depth,
+        "epochs": epochs,
+        "lr": lr,
+        "val_frac": val_frac,
+        "seed": seed,
+        "n_channels": int(ys_np.shape[2]),
+        "n_static": int(static_np.shape[1]),
         "n_w": int(n_w),
     }
 
@@ -353,12 +359,13 @@ def train(
     val_pred_std = np.asarray(
         _predict_batch(val_model, jnp.asarray(ys_np[val_idx]), jnp.asarray(static_np[val_idx]))
     )
-    val_metrics = _metrics(
-        raw_titer[val_idx], standardizer.denorm_target(val_pred_std)
-    )
+    val_metrics = _metrics(raw_titer[val_idx], standardizer.denorm_target(val_pred_std))
     logger.info(
         "[cde:val] RMSE=%.1f  MAE=%.1f  MAPE=%.1f%%  R2=%.3f",
-        val_metrics["rmse"], val_metrics["mae"], val_metrics["mape"] * 100, val_metrics["r2"],
+        val_metrics["rmse"],
+        val_metrics["mae"],
+        val_metrics["mape"] * 100,
+        val_metrics["r2"],
     )
 
     # 2) Refit on all data for the deployed model.
@@ -379,9 +386,7 @@ def predict(bundle: CDEBundle, data_path: str | Path) -> pd.Series:
     """Predict final titer for every experiment in ``data_path``."""
     seq = dp.build_sequences(data_path, None)
     ys_np, static_np, _ = build_arrays(seq, bundle.standardizer)
-    pred_std = np.asarray(
-        _predict_batch(bundle.model, jnp.asarray(ys_np), jnp.asarray(static_np))
-    )
+    pred_std = np.asarray(_predict_batch(bundle.model, jnp.asarray(ys_np), jnp.asarray(static_np)))
     preds = bundle.standardizer.denorm_target(pred_std)
     index = [e.exp_id for e in seq.experiments]
     return pd.Series(preds, index=index, name=schema.TARGET_COL)
@@ -414,8 +419,13 @@ def save_bundle(bundle: CDEBundle, path: str | Path) -> None:
 def _skeleton(config: dict) -> NeuralCDE:
     """Rebuild an untrained model with the right shapes for deserialisation."""
     return NeuralCDE(
-        config["n_static"], config["n_channels"], config["n_w"], config["hidden_size"],
-        config["width"], config["depth"], key=jax.random.PRNGKey(0),
+        config["n_static"],
+        config["n_channels"],
+        config["n_w"],
+        config["hidden_size"],
+        config["width"],
+        config["depth"],
+        key=jax.random.PRNGKey(0),
     )
 
 
@@ -462,9 +472,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 def _run_train(args: argparse.Namespace) -> int:
     bundle, _ = train(
-        args.data, args.targets,
-        hidden_size=args.hidden_size, width=args.width, depth=args.depth,
-        epochs=args.epochs, lr=args.lr, val_frac=args.val_frac, seed=args.seed,
+        args.data,
+        args.targets,
+        hidden_size=args.hidden_size,
+        width=args.width,
+        depth=args.depth,
+        epochs=args.epochs,
+        lr=args.lr,
+        val_frac=args.val_frac,
+        seed=args.seed,
     )
     save_bundle(bundle, args.model)
     return 0
@@ -473,9 +489,12 @@ def _run_train(args: argparse.Namespace) -> int:
 def _run_predict(args: argparse.Namespace) -> int:
     bundle = load_bundle(args.model)
     preds = predict(bundle, args.data)
-    times = dp.read_inputs(args.data).groupby(schema.EXP_COL, sort=False)[
-        schema.TIME_COL
-    ].max().reindex(preds.index)
+    times = (
+        dp.read_inputs(args.data)
+        .groupby(schema.EXP_COL, sort=False)[schema.TIME_COL]
+        .max()
+        .reindex(preds.index)
+    )
     out = pd.DataFrame(
         {
             schema.EXP_COL: preds.index,

@@ -63,9 +63,7 @@ def plot_titer_distribution(targets: pd.Series):
     norm = _titer_norm(targets)
 
     fig, ax = plt.subplots(figsize=(5.5, 6), constrained_layout=True)
-    parts = ax.violinplot(
-        values, showmeans=False, showmedians=False, showextrema=False, widths=0.8
-    )
+    parts = ax.violinplot(values, showmeans=False, showmedians=False, showextrema=False, widths=0.8)
     for body in parts["bodies"]:
         body.set_facecolor("#b3cde3")
         body.set_alpha(0.4)
@@ -74,9 +72,7 @@ def plot_titer_distribution(targets: pd.Series):
     # Jittered points, coloured by titer.
     rng = np.random.default_rng(0)
     jitter = 1 + (rng.random(values.size) - 0.5) * 0.18
-    ax.scatter(
-        jitter, values, c=_CMAP(norm(values)), s=28, edgecolor="k", linewidth=0.3, zorder=3
-    )
+    ax.scatter(jitter, values, c=_CMAP(norm(values)), s=28, edgecolor="k", linewidth=0.3, zorder=3)
 
     median, mean = float(np.median(values)), float(np.mean(values))
     ax.axhline(median, ls="--", color="#444444", lw=1, label=f"median = {median:.0f}")
@@ -105,8 +101,11 @@ def _plot_titer_colored(ax, df, targets, column, norm, step=False):
     for exp, group in df.groupby(schema.EXP_COL, sort=False):
         group = group.sort_values(schema.TIME_COL)
         ax.plot(
-            group[schema.TIME_COL], group[column],
-            color=_CMAP(norm(targets.get(exp, np.nan))), alpha=0.6, lw=1.0,
+            group[schema.TIME_COL],
+            group[column],
+            color=_CMAP(norm(targets.get(exp, np.nan))),
+            alpha=0.6,
+            lw=1.0,
             drawstyle=drawstyle,
         )
 
@@ -239,7 +238,8 @@ def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = Non
     axes[0].plot([lo, hi], [lo, hi], "--", color="grey", lw=1)
     axes[0].scatter(y, oof, s=22, alpha=0.7, color="#1f77b4")
     axes[0].set(
-        xlabel="Actual titer", ylabel="Predicted titer (out-of-fold)",
+        xlabel="Actual titer",
+        ylabel="Predicted titer (out-of-fold)",
         title=f"XGBoost baseline — repeated 5-fold CV (R²={r2:.2f}, RMSE={rmse:.0f})",
     )
     axes[1].axhline(0, ls="--", color="grey", lw=1)
@@ -248,7 +248,9 @@ def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = Non
     return fig
 
 
-def plot_feature_importance(X: pd.DataFrame | None = None, y: pd.Series | None = None, top: int = 15):
+def plot_feature_importance(
+    X: pd.DataFrame | None = None, y: pd.Series | None = None, top: int = 15
+):
     """Top XGBoost feature importances (which engineered features matter)."""
     if X is None or y is None:
         X, y = baseline_matrix()
@@ -287,12 +289,16 @@ def plot_interpolation_comparison():
     t, w, _, _, _ = _toy_cde_path()
     fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
     tt = np.linspace(t.min(), t.max(), 400)
-    ax.plot(tt, np.interp(tt, t, w), color="#d62728", lw=1.5, ls="--",
-            label="linear — fabricates ramps")
+    ax.plot(
+        tt, np.interp(tt, t, w), color="#d62728", lw=1.5, ls="--", label="linear — fabricates ramps"
+    )
     ax.step(t, w, where="post", color="#1f77b4", lw=2, label="step (used for W: controls)")
     ax.scatter(t, w, color="k", zorder=3, s=30, label="daily samples")
-    ax.set(xlabel="real time [day]", ylabel="feed W",
-           title="A step control: linear vs step interpolation")
+    ax.set(
+        xlabel="real time [day]",
+        ylabel="feed W",
+        title="A step control: linear vs step interpolation",
+    )
     ax.legend(fontsize=8)
     return fig
 
@@ -303,8 +309,7 @@ def plot_path_parameter():
     time_s, w_s = path[:, 0], path[:, 1]
     fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True, constrained_layout=True)
     axes[0].plot(s, time_s, "-o", color="#2ca02c")
-    axes[0].set(ylabel="real time  t(s)",
-                title="Real time is a channel; s is the solver clock")
+    axes[0].set(ylabel="real time  t(s)", title="Real time is a channel; s is the solver clock")
     axes[1].plot(s, w_s, "-o", color="#1f77b4")
     axes[1].set(xlabel="path parameter s  (the solver clock)", ylabel="feed  W(s)")
     # Shade the control-jump segments (where W moves but real time is flat).
@@ -324,16 +329,24 @@ def plot_path_geometry():
     for i in range(len(s) - 1):
         is_jump = abs(w_s[i + 1] - w_s[i]) > 1e-9
         ax.annotate(
-            "", xy=(time_s[i + 1], w_s[i + 1]), xytext=(time_s[i], w_s[i]),
+            "",
+            xy=(time_s[i + 1], w_s[i + 1]),
+            xytext=(time_s[i], w_s[i]),
             arrowprops=dict(arrowstyle="->", lw=2, color="#1f77b4" if is_jump else "#2ca02c"),
         )
     ax.scatter(time_s, w_s, color="k", s=25, zorder=3)
-    ax.set(xlabel="real time (channel 0)", ylabel="feed W (channel)",
-           title="Path geometry: horizontal = time flows, vertical = control jumps")
-    ax.legend(handles=[
-        Line2D([], [], color="#2ca02c", label="flow: time & X move, W held"),
-        Line2D([], [], color="#1f77b4", label="jump: W moves, time & X held"),
-    ], fontsize=8)
+    ax.set(
+        xlabel="real time (channel 0)",
+        ylabel="feed W (channel)",
+        title="Path geometry: horizontal = time flows, vertical = control jumps",
+    )
+    ax.legend(
+        handles=[
+            Line2D([], [], color="#2ca02c", label="flow: time & X move, W held"),
+            Line2D([], [], color="#1f77b4", label="jump: W moves, time & X held"),
+        ],
+        fontsize=8,
+    )
     return fig
 
 
@@ -350,9 +363,12 @@ def plot_cde_toy_state():
     ax.plot(s, z, "-o", color="#9467bd")
     for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
         ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
-    ax.set(xlabel="path parameter s", ylabel="toy hidden state z(s)",
-           title="Hidden state updates on time increments AND control jumps\n"
-                 "(shaded = control-jump segments)")
+    ax.set(
+        xlabel="path parameter s",
+        ylabel="toy hidden state z(s)",
+        title="Hidden state updates on time increments AND control jumps\n"
+        "(shaded = control-jump segments)",
+    )
     return fig
 
 
