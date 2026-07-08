@@ -265,6 +265,98 @@ def plot_feature_importance(X: pd.DataFrame | None = None, y: pd.Series | None =
 
 
 # ---------------------------------------------------------------------------
+# CDE path illustration (toy example)
+# ---------------------------------------------------------------------------
+def _toy_cde_path():
+    """A tiny synthetic experiment and its mixed CDE path, for illustration.
+
+    Reuses ``cde.make_mixed_cde_path`` so the pictures match the real construction.
+    """
+    from . import cde  # lazy: only this illustration pulls in the JAX stack
+
+    t = np.array([0.0, 1, 2, 3, 4, 5])
+    w = np.array([0.0, 0, 5, 5, 0, 0])  # feed: switches on at day 2, off at day 4
+    x = np.array([1.0, 2, 4, 6, 7, 7.5])  # a continuous-ish state
+    ys = np.column_stack([t, w, x]).astype(np.float32)
+    s, path = cde.make_mixed_cde_path(ys, n_w=1)
+    return t, w, x, np.asarray(s), np.asarray(path)
+
+
+def plot_interpolation_comparison():
+    """Toy feed control: linear interpolation fabricates ramps; step does not."""
+    t, w, _, _, _ = _toy_cde_path()
+    fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+    tt = np.linspace(t.min(), t.max(), 400)
+    ax.plot(tt, np.interp(tt, t, w), color="#d62728", lw=1.5, ls="--",
+            label="linear — fabricates ramps")
+    ax.step(t, w, where="post", color="#1f77b4", lw=2, label="step (used for W: controls)")
+    ax.scatter(t, w, color="k", zorder=3, s=30, label="daily samples")
+    ax.set(xlabel="real time [day]", ylabel="feed W",
+           title="A step control: linear vs step interpolation")
+    ax.legend(fontsize=8)
+    return fig
+
+
+def plot_path_parameter():
+    """Real time t(s) and control W(s) against the artificial path parameter s."""
+    _, _, _, s, path = _toy_cde_path()
+    time_s, w_s = path[:, 0], path[:, 1]
+    fig, axes = plt.subplots(2, 1, figsize=(7, 6), sharex=True, constrained_layout=True)
+    axes[0].plot(s, time_s, "-o", color="#2ca02c")
+    axes[0].set(ylabel="real time  t(s)",
+                title="Real time is a channel; s is the solver clock")
+    axes[1].plot(s, w_s, "-o", color="#1f77b4")
+    axes[1].set(xlabel="path parameter s  (the solver clock)", ylabel="feed  W(s)")
+    # Shade the control-jump segments (where W moves but real time is flat).
+    for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
+        for ax in axes:
+            ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
+    return fig
+
+
+def plot_path_geometry():
+    """Path traced in (real time, control) space: horizontal flows, vertical jumps."""
+    from matplotlib.lines import Line2D
+
+    _, _, _, s, path = _toy_cde_path()
+    time_s, w_s = path[:, 0], path[:, 1]
+    fig, ax = plt.subplots(figsize=(6.5, 5), constrained_layout=True)
+    for i in range(len(s) - 1):
+        is_jump = abs(w_s[i + 1] - w_s[i]) > 1e-9
+        ax.annotate(
+            "", xy=(time_s[i + 1], w_s[i + 1]), xytext=(time_s[i], w_s[i]),
+            arrowprops=dict(arrowstyle="->", lw=2, color="#1f77b4" if is_jump else "#2ca02c"),
+        )
+    ax.scatter(time_s, w_s, color="k", s=25, zorder=3)
+    ax.set(xlabel="real time (channel 0)", ylabel="feed W (channel)",
+           title="Path geometry: horizontal = time flows, vertical = control jumps")
+    ax.legend(handles=[
+        Line2D([], [], color="#2ca02c", label="flow: time & X move, W held"),
+        Line2D([], [], color="#1f77b4", label="jump: W moves, time & X held"),
+    ], fontsize=8)
+    return fig
+
+
+def plot_cde_toy_state():
+    """Toy hidden state under a fixed field: it updates on flows AND control jumps."""
+    _, _, _, s, path = _toy_cde_path()
+    # A trivial constant vector field f, so dz = f . dC(s) (a linear CDE).
+    f = np.array([0.2, 0.5, 0.3])  # weights on [time, W, X] increments
+    dz = np.diff(path, axis=0) @ f
+    z = np.concatenate([[0.0], np.cumsum(dz)])
+    w_s = path[:, 1]
+
+    fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
+    ax.plot(s, z, "-o", color="#9467bd")
+    for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
+        ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
+    ax.set(xlabel="path parameter s", ylabel="toy hidden state z(s)",
+           title="Hidden state updates on time increments AND control jumps\n"
+                 "(shaded = control-jump segments)")
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # Generate all README figures
 # ---------------------------------------------------------------------------
 def main() -> None:
@@ -283,6 +375,10 @@ def main() -> None:
         "gompertz_signal.png": plot_gompertz_signal(df, targets),
         "regression_cv.png": plot_cv_predictions(X, yt),
         "feature_importance.png": plot_feature_importance(X, yt),
+        "cde_interpolation.png": plot_interpolation_comparison(),
+        "cde_path_parameter.png": plot_path_parameter(),
+        "cde_path_geometry.png": plot_path_geometry(),
+        "cde_toy_state.png": plot_cde_toy_state(),
     }
     for name, fig in figures.items():
         out = FIGURES_DIR / name

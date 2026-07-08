@@ -506,6 +506,82 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ### Seeing it: real time vs the path parameter $s$
+
+    The single most confusing thing about this construction is that **$s$ — not real
+    time — is the solver's clock**, and real time rides along as *a channel* of the path.
+    The toy example below (a feed that switches on at day 2 and off at day 4, with one
+    continuous state) makes it concrete.
+
+    First, why `W:` is step-interpolated: linear interpolation invents ramps between
+    daily samples that never physically happened.
+    """)
+    return
+
+
+@app.cell
+def _(plotting):
+    fig_interp = plotting.plot_interpolation_comparison()
+    fig_interp
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Next, the same path plotted against $s$. On the shaded segments the **control jumps
+    while real time is held flat** — a physical discontinuity becomes a segment of
+    *finite* length in $s$, which is exactly why the solver can see it.
+    """)
+    return
+
+
+@app.cell
+def _(plotting):
+    fig_params = plotting.plot_path_parameter()
+    fig_params
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    The same thing as **path geometry** in (real time, control) space: horizontal arrows
+    are *flow* segments (real time and `X:` advance, `W:` held); vertical arrows are
+    *jump* segments (`W:` steps, real time and `X:` held). The neural CDE integrates
+    along this staircase-of-time-and-controls.
+    """)
+    return
+
+
+@app.cell
+def _(plotting):
+    fig_geom = plotting.plot_path_geometry()
+    fig_geom
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Finally, a toy hidden state under a fixed vector field. Note it updates on **both**
+    the flow segments (time/`X:` increments) **and** the shaded control-jump segments — a
+    control switch genuinely moves the latent state, which is the whole point of feeding
+    the controls through the path.
+    """)
+    return
+
+
+@app.cell
+def _(plotting):
+    fig_toy_state = plotting.plot_cde_toy_state()
+    fig_toy_state
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ### Result
 
     On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.65),
