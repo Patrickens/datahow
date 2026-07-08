@@ -526,7 +526,7 @@ def _(mo):
       repeated, so the padded tail is flat ($\mathrm{d}C = 0$) and contributes nothing
       (there is a unit test for this).
     - **Diagnostics:** we watch the training curves (below) and a small hyperparameter
-      sweep (`titer-cde sweep`) to tell undertraining from overfitting from LR
+      sweep (`titer-sweep`) to tell undertraining from overfitting from LR
       instability.
     """)
     return
@@ -661,7 +661,7 @@ def _(mo):
     ### Result
 
     On ~100 experiments the CDE's single 20% holdout is **very noisy**: R² has ranged
-    from ~0.48 (default config) to ~0.9 on other seeds/configs (see `titer-cde sweep`).
+    from ~0.48 (default config) to ~0.9 on other seeds/configs (see `titer-sweep`).
     So it is best read as *competitive with, but not clearly beating,* the baseline —
     exactly as expected, since with so little data the flexible black-box vector field is
     under-determined. Its value is methodological; a repeated holdout (or the sweep)

@@ -204,7 +204,7 @@ R² ranges from ~0.48 (default config) to ~0.9 across seeds/configs (`titer-cde
 sweep`), so it is best read as competitive with, not clearly beating, the baseline.
 A repeated holdout would give a more stable estimate; the CDE's value here is
 methodological. Use `titer-cde train` (writes a training-history CSV) and
-`titer-cde sweep` to diagnose training and explore hyperparameters.
+`titer-sweep` to diagnose training and explore hyperparameters.
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
 > criterion** for this challenge; clarity of preprocessing, evaluation,

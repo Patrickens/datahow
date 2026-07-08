@@ -264,7 +264,8 @@ Driven by `claude_cde_prompt.txt`; small commit per step.
 - `fit()` now returns `(model, history)` (train/val MSE + val RMSE/MAE/R² at ~30
   checkpoints); `train` CLI writes a history CSV; `plot_cde_training_curves()` +
   a notebook cell visualise it.
-- Added `titer-cde sweep` (+ `train(refit_all=False)`); ≤30 sampled configs →
+- Added a `titer-sweep` CLI in its own `sweep.py` module (+ `train(refit_all=False)`
+  in `cde.py`); ≤30 sampled configs →
   `artifacts/cde_sweep_results.csv`; smoke-tested, user-run for the full sweep.
 - Honesty note: the single 20% holdout is **very noisy** — R² ranged ~0.48–0.9
   across seeds/configs — so the CDE is framed as competitive-not-clearly-better,

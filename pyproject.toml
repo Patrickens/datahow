@@ -33,6 +33,7 @@ dev = [
 titer-preprocess = "titer_prediction.data_preprocessing:main"
 titer-regression = "titer_prediction.regression:main"
 titer-cde = "titer_prediction.cde:main"
+titer-sweep = "titer_prediction.sweep:main"
 
 [build-system]
 requires = ["hatchling"]
