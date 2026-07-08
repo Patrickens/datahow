@@ -131,6 +131,41 @@ def test_cde_build_arrays_pads_flat_tail(synthetic_long, tmp_path):
     assert targets is not None and targets.shape == (2,)
 
 
+def test_make_mixed_cde_path():
+    from titer_prediction import cde
+
+    # cols = [real time, W (1), X (1)]; W changes at t=2, and a flat padded tail.
+    #   t:   0   1   2   2(pad)
+    #   W:   0   0   5   5
+    #   X:  10  12  14  14
+    ys = np.array(
+        [[0.0, 0.0, 10.0], [1.0, 0.0, 12.0], [2.0, 5.0, 14.0], [2.0, 5.0, 14.0]],
+        dtype=float,
+    )
+    s, path = cde.make_mixed_cde_path(ys, n_w=1)
+    s, path = np.asarray(s), np.asarray(path)
+
+    # Path parameter is strictly increasing (2T-1 knots).
+    assert path.shape == (2 * ys.shape[0] - 1, 3)
+    assert np.all(np.diff(s) > 0)
+
+    time, w, x = path[:, 0], path[:, 1], path[:, 2]
+    d_time, d_w, d_x = np.diff(time), np.diff(w), np.diff(x)
+
+    # Every segment is either a "flow" (W held) or a "jump" (time & X held).
+    is_jump = d_w != 0
+    # W changes only where time and X are held fixed (pure control jump).
+    assert np.allclose(d_time[is_jump], 0)
+    assert np.allclose(d_x[is_jump], 0)
+    # X moves only together with real time, never as an artificial jump.
+    assert np.all((d_x == 0) | (d_time != 0))
+    # The one real W change (0 -> 5) is captured as a single jump segment.
+    assert is_jump.sum() == 1 and np.isclose(d_w[is_jump][0], 5.0)
+
+    # The flat padded tail (last two rows identical) contributes zero increments.
+    np.testing.assert_allclose(path[-1], path[-2])
+
+
 # ---------------------------------------------------------------------------
 # Integrity checks against the real (confidential) data
 # ---------------------------------------------------------------------------
