@@ -90,12 +90,19 @@ features we want, and extensible enough to host the Gompertz custom feature.
 
 ### 2. Neural Controlled Differential Equation (diffrax)
 
-A sequence model that ingests the raw trajectories directly: it treats the `Z:`
-parameters as static context (initialising the hidden state) and the `W:`/`X:`
-channels as a driving path, integrates a neural CDE, and maps the terminal
-hidden state to titer. It handles variable length and irregular sampling
+A sequence model that ingests the raw trajectories directly: the `W:`/`X:`
+channels form a driving path, a neural CDE integrates along it, and the terminal
+hidden state maps to titer. It handles variable length and irregular sampling
 natively (batches are padded by holding the last observation — a flat,
 zero-contribution tail — so no masking is needed).
+
+**What initialises the hidden state.** `Z:` and `W:` overlap heavily — the `W:`
+trajectories are the feed / pH / temperature recipe *unrolled over time*, so most
+of `Z:` is already in the path (and the planned duration is the time channel). We
+therefore initialise `z₀` from only the design scalars with **no `W:` counterpart**:
+**`Z:Stir` and `Z:DO`** (see `STATIC_INIT_COLS` in `cde.py`), avoiding duplication.
+(The XGBoost baseline, by contrast, uses `Z:` and *not* `W:`, so there `Z:` is the
+compact stand-in for the whole control design.)
 
 **Interpolation as an inductive bias (challenge #2).** How we interpolate between
 daily samples is a modelling assumption, chosen per channel group (see
@@ -186,7 +193,7 @@ targets arrive, but the ordering matches expectations.
 | ----- | ---- | ---- | -- | -------- |
 | Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
 | **XGBoost baseline** | **~309** | **~12%** | **~0.80** | repeated 5-fold CV |
-| Neural CDE | ~665 | ~17% | ~0.58 | 20% holdout, 300 epochs |
+| Neural CDE | ~710 | ~19% | ~0.52 | 20% holdout, 300 epochs (noisy) |
 
 The XGBoost baseline is the stronger model here, as anticipated for a small
 tabular-friendly dataset; the CDE demonstrates the path-based methodology.

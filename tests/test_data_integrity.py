@@ -34,7 +34,16 @@ requires_real_data = pytest.mark.skipif(
 def synthetic_long() -> pd.DataFrame:
     rows = [
         # Exp A: 3 days; Z only on day 0 (to be forward-filled)
-        {"RowID": 0, "Exp": "A", "Time[day]": 0, "Z:ExpDuration": 3, "W:temp": 37.0, "X:VCD": 1.0},
+        {
+            "RowID": 0,
+            "Exp": "A",
+            "Time[day]": 0,
+            "Z:ExpDuration": 3,
+            "Z:Stir": 200.0,
+            "Z:DO": 40.0,
+            "W:temp": 37.0,
+            "X:VCD": 1.0,
+        },
         {
             "RowID": 1,
             "Exp": "A",
@@ -52,7 +61,16 @@ def synthetic_long() -> pd.DataFrame:
             "X:VCD": 4.0,
         },
         # Exp B: 2 days
-        {"RowID": 3, "Exp": "B", "Time[day]": 0, "Z:ExpDuration": 2, "W:temp": 35.0, "X:VCD": 1.0},
+        {
+            "RowID": 3,
+            "Exp": "B",
+            "Time[day]": 0,
+            "Z:ExpDuration": 2,
+            "Z:Stir": 210.0,
+            "Z:DO": 45.0,
+            "W:temp": 35.0,
+            "X:VCD": 1.0,
+        },
         {
             "RowID": 4,
             "Exp": "B",
@@ -127,7 +145,8 @@ def test_cde_build_arrays_pads_flat_tail(synthetic_long, tmp_path):
     assert (n, t_max, c) == (2, 3, 3)  # 2 exps, padded to 3 steps, time + 2 channels
     # Exp B (length 2) has its final step held over the padded tail -> flat.
     np.testing.assert_allclose(ys[1, 2], ys[1, 1])
-    assert static.shape == (2, 1)
+    # Hidden state is initialised only from the static-only design (Z:Stir, Z:DO).
+    assert static.shape == (2, 2)
     assert targets is not None and targets.shape == (2,)
 
 

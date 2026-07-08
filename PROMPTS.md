@@ -191,6 +191,53 @@ comment in the state-trajectory discussion (README + notebook).
   the AUC/level of VCD and the AUC of lactate/glucose/ammonia — biologically
   sensible, unlike catch22's abstract descriptors.
 
+## 8. Neural CDE — mixed interpolation overhaul
+
+**Goal.** Give each channel group the right interpolation inductive bias while
+keeping a plain supervised CDE; explain it clearly; deliver in small commits.
+
+**Prompt (refined).**
+> Keep the model a simple supervised neural CDE ($\mathrm{d}z = f_\theta(z)\,
+> \mathrm{d}C(s)$, `Z:` initialises the hidden state, `C` carries real time + `W:`
+> + `X:`). No mechanistic, neural, or hybrid ODEs; no per-experiment or
+> time-varying kinetic parameters. Fix the interpolation: `W:` controls step,
+> `X:` observations piecewise linear, real time as channel 0, flat padded tails.
+> Build the mixed path with a helper `make_mixed_cde_path(ys, n_w)` (flow segment:
+> time & `X:` move, `W:` held; then jump segment: `W:` moves, time & `X:` held),
+> integrated over a strictly-increasing path parameter `s`, single `ControlTerm`.
+> Add tests. Update the notebook (interpolation as an inductive bias; toy plots of
+> linear-vs-step, `t(s)`/`W(s)`, path geometry, toy hidden state; a why-CDE
+> section; a mechanistic-ODE-alternative discussion). Small, meaningful commits.
+
+**Key decisions taken.**
+- Replaced whole-path `rectilinear_interpolation` with `make_mixed_cde_path`
+  (`W:` step, `X:` linear, time channel 0); `n_w` derived from `channel_names` and
+  threaded through the model/config/skeleton. Single `ControlTerm`, no `MultiTerm`.
+- Framed interpolation explicitly as an **inductive bias**; noted full rectilinear
+  is defensible only under an online-information reading.
+- Added toy path-parameter plots, a "why a CDE (not a neural ODE)?" section, and a
+  "mechanistic ODE alternative" note (out of scope: rate-law commitment, parameter
+  identification on ~100 runs, event handling, complexity).
+- Planned in plan-mode; delivered as six small commits (`cab4b32` … `1d93d7a`).
+
+## 9. CDE hidden-state init from static-only design (`Z:Stir`, `Z:DO`)
+
+**Goal.** Remove the `Z:`/`W:` redundancy in the CDE initialisation.
+
+**Prompt (refined).**
+> `Z:` and `W:` overlap: the `W:` trajectories are the feed / pH / temperature
+> recipe unrolled over time, and the planned duration is already the path's time
+> channel. The only `Z:` scalars with no `W:` counterpart are `Z:Stir` and `Z:DO`
+> — derive the CDE initial state from those instead of all 13 `Z:` scalars.
+
+**Key decisions taken.**
+- Initialise `z0` from `STATIC_INIT_COLS = ("Z:Stir", "Z:DO")` only; the feed / pH /
+  temperature design already enters via the `W:` path channels (and duration via the
+  time channel). The XGBoost baseline still uses all `Z:` (it does not use `W:`), so
+  there `Z:` is the compact stand-in for the control design.
+- Holdout dipped to ≈0.52 (single noisy 20% split) — expected when dropping
+  redundant-but-mildly-informative inputs; kept for cleaner, non-duplicative modelling.
+
 <!--
 Template for subsequent entries:
 

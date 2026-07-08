@@ -410,7 +410,12 @@ def _(mo):
       *rates of change of the inputs* steer the latent state (a Riemann–Stieltjes
       integral).
     - The static design scalars $Z$ set the initial state through a small network
-      $\zeta_\theta$ — this is how the `Z:` recipe enters.
+      $\zeta_\theta$. Note $Z$ and the `W:` controls **overlap**: the `W:`
+      trajectories are just the feed / pH / temperature recipe unrolled over time, so
+      passing all of `Z:` into $z_0$ would duplicate what the path already carries. We
+      therefore initialise from only the design scalars with **no `W:` counterpart** —
+      **stirring and dissolved oxygen** (`Z:Stir`, `Z:DO`); the planned duration is
+      likewise already the time channel.
     - The prediction is a linear readout of the terminal state,
       $\hat{y}=\ell_\theta\!\big(z(T)\big)$.
 
@@ -477,8 +482,10 @@ def _(mo):
        **geometry of the path**, not the speed it is traversed, so integrating in $s$ is
        legitimate — and it is what lets the solver see the control jumps.
 
-    4. **Initial state from the recipe** (`z0 = self.initial(static)`). The MLP
-       $\zeta_\theta$ maps the `Z:` design scalars to $z(s_0)\in\mathbb{R}^{h}$.
+    4. **Initial state from the static-only design** (`z0 = self.initial(static)`). The
+       MLP $\zeta_\theta$ maps the design scalars with no `W:` counterpart — `Z:Stir`
+       and `Z:DO` (see `STATIC_INIT_COLS`) — to $z(s_0)\in\mathbb{R}^{h}$; the feed / pH
+       / temperature recipe already enters through the `W:` path channels.
 
     5. **Define the controlled dynamics** (`ControlTerm(self.func, control)`). `self.func`
        is $f_\theta$, an MLP returning an $h\times c$ matrix; the term encodes
@@ -609,10 +616,11 @@ def _(mo):
     mo.md(r"""
     ### Result
 
-    On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.58 on a
-    single 20% split, so noisy), exactly as expected — with so little data the flexible
-    black-box vector field cannot be pinned down. Its value is methodological: it shows
-    the path we would scale up in a data-rich setting.
+    On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.52 on a
+    single 20% split — noisy, it shifts by a few points with small changes), exactly as
+    expected — with so little data the flexible black-box vector field cannot be pinned
+    down. Its value is methodological: it shows the path we would scale up in a data-rich
+    setting.
     """)
     return
 

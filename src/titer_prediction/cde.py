@@ -17,8 +17,12 @@ two core challenges:
   every jump is seen by the solver (cf. Kidger et al.; Morrill et al. 2021 on
   path parametrisation for neural CDEs). See :func:`make_mixed_cde_path`.
 
-The static ``Z:`` design scalars initialise the hidden state (``z0``); the
-terminal hidden state is read out to the (standardised, log) titer.
+Only the design scalars *without* a ``W:`` counterpart — stirring and dissolved
+oxygen (``Z:Stir``, ``Z:DO``) — initialise the hidden state (``z0``). The feed /
+pH / temperature design is already carried over time by the ``W:`` path channels,
+and the planned duration by the time channel, so passing all of ``Z:`` would only
+duplicate it. The terminal hidden state is read out to the (standardised, log)
+titer.
 
 CLI mirrors the regression module::
 
@@ -96,11 +100,33 @@ def _raw_matrix(exp: dp.ExperimentSequence) -> np.ndarray:
     return np.concatenate([exp.times[:, None], exp.channels], axis=1)
 
 
+# Design scalars used to initialise the hidden state. We keep only the ``Z:``
+# columns that have NO ``W:`` trajectory counterpart — stirring and dissolved
+# oxygen. The feed / pH / temperature design (rates, setpoints, shift and
+# start/end days) is already carried over time by the ``W:`` path channels, and
+# the planned duration is already the path's time channel; feeding all of ``Z:``
+# into z0 would just duplicate that information.
+STATIC_INIT_COLS: tuple[str, ...] = ("Z:Stir", "Z:DO")
+
+
+def _static_matrix(seq: dp.SequenceData) -> tuple[np.ndarray, list[str]]:
+    """Select the static-init columns (:data:`STATIC_INIT_COLS`) as an ``(n, k)`` array."""
+    idx = [seq.static_names.index(c) for c in STATIC_INIT_COLS if c in seq.static_names]
+    if not idx:
+        raise ValueError(
+            f"None of the static-init columns {STATIC_INIT_COLS} are present; "
+            f"available static columns: {seq.static_names}."
+        )
+    names = [seq.static_names[i] for i in idx]
+    matrix = np.stack([e.static[idx] for e in seq.experiments], axis=0)
+    return matrix, names
+
+
 def fit_standardizer(seq: dp.SequenceData) -> Standardizer:
     """Fit standardisation stats over all real (unpadded) timepoints."""
     matrices = [_raw_matrix(e) for e in seq.experiments]
     stacked = np.concatenate(matrices, axis=0)
-    statics = np.stack([e.static for e in seq.experiments], axis=0)
+    statics, _ = _static_matrix(seq)
     targets = np.array([e.target for e in seq.experiments], dtype=float)
 
     eps = 1e-8
@@ -135,9 +161,8 @@ def build_arrays(
         ys[i, :length] = m
         ys[i, length:] = m[-1]  # hold last observation -> flat tail
 
-    static = np.stack([standardizer.norm_static(e.static) for e in seq.experiments]).astype(
-        np.float32
-    )
+    static_matrix, _ = _static_matrix(seq)
+    static = standardizer.norm_static(static_matrix).astype(np.float32)
 
     targets = None
     if seq.has_targets:
@@ -321,6 +346,7 @@ def train(
         "n_channels": int(ys_np.shape[2]),
         "n_static": int(static_np.shape[1]),
         "n_w": int(n_w),
+        "static_init_cols": _static_matrix(seq)[1],
     }
 
     def fit(indices: np.ndarray, key) -> NeuralCDE:
