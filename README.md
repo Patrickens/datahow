@@ -65,16 +65,19 @@ feature vector we combine:
 - **Curve-fit features (Gompertz).** Fit a 4-parameter Gompertz growth curve
   with baseline,
   `y(t) = y0 + a·exp(-b·exp(-k_g·(t - t_i)))`,
-  to the key trajectories (notably VCD) and extract its parameters — amplitude
-  `a`, shape `b`, inflection time `t_i`, growth rate `k_g`, and baseline `y0`.
-  This compresses a whole growth curve into a handful of **interpretable**
-  numbers and handles differing lengths gracefully.
+  to the VCD trajectory and extract its parameters — amplitude `a`, shape `b`,
+  inflection time `t_i`, growth rate `k_g`, and baseline `y0`. This compresses a
+  whole growth curve into a handful of **interpretable** numbers and handles
+  differing lengths gracefully. Its limitation: a single monotone sigmoid
+  **cannot capture sequential substrate dynamics** — the ordered depletion of
+  glucose then glutamine, feed-driven replenishment, or the lactate
+  production→consumption switch. Those coupled dynamics are left to catch22 and
+  are handled more naturally by the CDE.
 - **Automated time-series features (catch22).** The canonical *catch22* set —
   22 non-redundant, highly informative features per channel (trend,
   autocorrelation, spectral, distribution, entropy, …). Deliberately compact:
-  22 features/channel suits ~100 experiments far better than the thousands a
-  library like tsfresh would emit, and it stays numba-free so it shares one
-  environment with the JAX/diffrax stack.
+  22 features/channel suits ~100 experiments and stays numba-free, so it shares
+  one environment with the JAX/diffrax stack.
 - Plus the pass-through `Z:` design scalars and simple aggregates (final value,
   AUC — e.g. the integral of viable cells — and slope).
 
@@ -95,6 +98,42 @@ channel and integrate over a strictly-increasing *path parameter* so every jump
 is captured (the rectilinear-CDE approach of Morrill et al., 2021). As expected,
 the CDE lands below the baseline given only ~100 experiments — it illustrates the
 more expressive, data-hungry approach we would scale up in a data-rich setting.
+
+## Exploratory data analysis
+
+A full, narrated walk-through lives in the [`exploration.py`](exploration.py)
+marimo notebook (`uv run marimo edit exploration.py`); figures are regenerated
+with `uv run python -m titer_prediction.plotting`. Highlights:
+
+**Measured states**, one line per experiment coloured by final titer:
+
+![State trajectories](figures/input_state_timecourses.png)
+
+A notable domain signal: in the **longer runs, lactate rises and then falls**.
+This is the classic **lactate metabolic shift** — cells switch from net lactate
+*production* (glycolytic overflow) to net *consumption*, typically once glucose
+starts to become limiting. It is a recognised marker of healthy, productive
+fed-batch CHO cultures and tends to coincide with higher final titer, so it is a
+genuinely informative feature rather than noise.
+
+**Control inputs** are step-like — the feeds switch on/off — which is exactly why
+the CDE uses rectilinear interpolation:
+
+![Control trajectories](figures/input_control_timecourses.png)
+
+**Gompertz fits** compress each VCD growth curve into interpretable parameters
+(fit R² ≈ 0.99), which carry real signal against titer:
+
+![Gompertz fits](figures/gompertz_fits.png)
+
+**Baseline diagnostics** — out-of-fold predictions (the model under-predicts the
+few very high-titer runs) and the feature importances, which draw on all three
+feature families (catch22, the `X:VCD_auc` integral-of-viable-cells, and Gompertz
+parameters):
+
+![Regression CV](figures/regression_cv.png)
+
+![Feature importance](figures/feature_importance.png)
 
 ## Results (cross-validated / held-out)
 

@@ -79,8 +79,9 @@ challenges, and pin down the feature-engineering approach for the baseline.
 - README now opens with *Problem understanding*, *The two core challenges*, and
   *Modelling philosophy* sections before any code/usage detail.
 - Baseline feature engineering = Gompertz curve-fit parameters (interpretable
-  growth-curve summary) **+** tsfresh automated features **+** pass-through `Z:`
-  scalars and simple aggregates, feeding XGBoost.
+  growth-curve summary) **+** automated time-series features **+** pass-through
+  `Z:` scalars and simple aggregates, feeding XGBoost. (The automated-feature
+  library was initially planned as tsfresh but changed to catch22 — see entry 3.)
 - Alternatives explicitly acknowledged (Gaussian Processes et al.); hybrid /
   mechanistic modelling named as the ideal-but-out-of-scope direction.
 - Gompertz reference implementation adapted from the author's prior work
@@ -149,6 +150,20 @@ figures saved for the README.
 - (recorded as implemented) Plotting helpers factored into an importable module
   so both the marimo notebook and a headless figure-generation step share them
   (DRY); figures saved to a committed `assets/` folder for the README.
+
+## 6. Domain observation — the lactate metabolic shift
+
+**Prompt (refined).**
+> In the longer experiments the lactate goes down, which suggests it is being
+> consumed — perhaps once glucose starts to deplete. Add a comment on this in the
+> README, the prompt log, and the marimo notebook.
+
+**Note.** This is the classic **lactate metabolic shift** in mammalian (CHO)
+fed-batch culture: cells switch from net lactate *production* (glycolytic
+overflow) to net *consumption*, usually as glucose becomes limiting. It is a
+recognised marker of healthy, high-producing cultures and tends to coincide with
+higher titer — a genuinely informative signal. Captured as a domain-insight
+comment in the state-trajectory discussion (README + notebook).
 
 <!--
 Template for subsequent entries:

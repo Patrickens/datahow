@@ -8,17 +8,17 @@ combining three complementary views of each variable-length trajectory:
    max/mean/std/AUC/slope per channel, plus the pass-through ``Z:`` parameters).
 2. **Gompertz growth-curve parameters** — a 4-parameter-with-baseline Gompertz
    curve is fit to the viable-cell-density (``X:VCD``) trajectory and its
-   parameters extracted. These compress a whole growth curve into a handful of
-   interpretable numbers (amplitude, shape, inflection time, growth rate,
-   baseline) and are robust to differing series lengths.
+   parameters extracted (amplitude, shape, inflection time, growth rate,
+   baseline). These compress a whole growth curve into a handful of interpretable
+   numbers, robust to differing series lengths. Note the limitation: a single
+   monotone sigmoid *cannot* capture sequential substrate dynamics — the ordered
+   depletion of glucose then glutamine, feed-driven replenishment, or the lactate
+   production->consumption switch. Those coupled dynamics are left to catch22 and
+   are handled more naturally by the CDE.
 3. **catch22 features** — the canonical 22-feature time-series set applied per
-   measured-state (``X:``) channel. Compact and numba-free, so it shares a single
-   environment with the JAX/diffrax stack.
-
-Why catch22 over tsfresh: tsfresh emits thousands of features (overfitting risk
-on ~100 experiments) and hard-depends on ``numba``, which conflicts with the
-numpy that JAX requires. catch22 gives a curated, non-redundant set with no such
-conflict.
+   measured-state (``X:``) channel. Deliberately compact (well-suited to ~100
+   samples) and numba-free, so it shares a single environment with the
+   JAX/diffrax stack.
 """
 
 from __future__ import annotations
