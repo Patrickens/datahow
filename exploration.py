@@ -409,13 +409,14 @@ def _(mo):
       $f_\theta(z)\,\mathrm{d}X$ is a matrix–vector product, so the model learns how the
       *rates of change of the inputs* steer the latent state (a Riemann–Stieltjes
       integral).
-    - The static design scalars $Z$ set the initial state through a small network
-      $\zeta_\theta$. Note $Z$ and the `W:` controls **overlap**: the `W:`
-      trajectories are just the feed / pH / temperature recipe unrolled over time, so
-      passing all of `Z:` into $z_0$ would duplicate what the path already carries. We
-      therefore initialise from only the design scalars with **no `W:` counterpart** —
-      **stirring and dissolved oxygen** (`Z:Stir`, `Z:DO`); the planned duration is
-      likewise already the time channel.
+    - The initial state is set from the static design **and the first observation**,
+      $z_0 = \zeta_\theta(Z,\, C_0)$ with $C_0 = [t_0, W(t_0), X(t_0)]$. Two subtleties:
+      (i) $Z$ and the `W:` controls **overlap** — the `W:` trajectories are the feed /
+      pH / temperature recipe unrolled over time — so we take for $Z$ only the design
+      scalars with **no `W:` counterpart**, **stirring and dissolved oxygen**
+      (`Z:Stir`, `Z:DO`); (ii) a CDE only ever sees control *increments* $\mathrm{d}C$,
+      so the **absolute** starting state (initial VCD, substrate levels — very
+      informative) is invisible unless injected here via $C_0$.
     - The prediction is a linear readout of the terminal state,
       $\hat{y}=\ell_\theta\!\big(z(T)\big)$.
 
@@ -482,10 +483,12 @@ def _(mo):
        **geometry of the path**, not the speed it is traversed, so integrating in $s$ is
        legitimate — and it is what lets the solver see the control jumps.
 
-    4. **Initial state from the static-only design** (`z0 = self.initial(static)`). The
-       MLP $\zeta_\theta$ maps the design scalars with no `W:` counterpart — `Z:Stir`
-       and `Z:DO` (see `STATIC_INIT_COLS`) — to $z(s_0)\in\mathbb{R}^{h}$; the feed / pH
-       / temperature recipe already enters through the `W:` path channels.
+    4. **Initial state from static design + first observation**
+       (`z0 = self.initial(concat([static, ys[0]]))`). The MLP $\zeta_\theta$ maps the
+       no-`W:`-counterpart scalars (`Z:Stir`, `Z:DO`, see `STATIC_INIT_COLS`) **and the
+       initial observation** $C_0 = $ `ys[0]` $ = [t_0, W_0, X_0]$ to
+       $z(s_0)\in\mathbb{R}^{h}$. $C_0$ matters because the CDE only sees increments, so
+       the absolute initial VCD / substrate levels would otherwise never reach it.
 
     5. **Define the controlled dynamics** (`ControlTerm(self.func, control)`). `self.func`
        is $f_\theta$, an MLP returning an $h\times c$ matrix; the term encodes
@@ -506,6 +509,25 @@ def _(mo):
     (`equinox`/JAX), so $\zeta_\theta$, $f_\theta$ and $\ell_\theta$ are learned
     end-to-end. We fit on a train split, report a held-out score, then refit on all data
     for the deployed model.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    **In brief.**
+
+    - **Init:** `Z:` static (`Z:Stir`, `Z:DO`) **and** the first observation
+      $C_0 = [t_0, W_0, X_0]$ initialise the hidden state $z_0$.
+    - **Dynamics:** the path $C(s) = [t(s), W(s), X(s)]$ drives the CDE through its
+      increments $\mathrm{d}C$ — `W:` step-interpolated, `X:` and time linear.
+    - **Padding** is only for batching: the whole final row *including time* is
+      repeated, so the padded tail is flat ($\mathrm{d}C = 0$) and contributes nothing
+      (there is a unit test for this).
+    - **Diagnostics:** we watch the training curves (below) and a small hyperparameter
+      sweep (`titer-cde sweep`) to tell undertraining from overfitting from LR
+      instability.
     """)
     return
 
