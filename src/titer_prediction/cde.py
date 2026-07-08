@@ -39,6 +39,7 @@ CLI mirrors the regression module::
 from __future__ import annotations
 
 import argparse
+import itertools
 import logging
 import pickle
 from dataclasses import dataclass
@@ -330,8 +331,13 @@ def train(
     lr: float = 3e-3,
     val_frac: float = 0.2,
     seed: int = 0,
+    refit_all: bool = True,
 ) -> tuple[CDEBundle, dict[str, float], list[dict]]:
-    """Train the neural CDE with a validation holdout, then refit on all data."""
+    """Train the neural CDE with a validation holdout, then refit on all data.
+
+    Set ``refit_all=False`` to skip the deploy-time refit (used by the sweep, which
+    only needs the holdout metrics).
+    """
     seq = dp.build_sequences(data_path, targets_path)
     standardizer = fit_standardizer(seq)
     ys_np, static_np, y_np = build_arrays(seq, standardizer)
@@ -425,12 +431,15 @@ def train(
         val_metrics["r2"],
     )
 
-    # 2) Refit on all data for the deployed model.
-    logger.info("Refitting on all %d experiments...", n)
-    full_model, _ = fit(np.arange(n), k_full)
+    # 2) Refit on all data for the deployed model (skipped during sweeps).
+    if refit_all:
+        logger.info("Refitting on all %d experiments...", n)
+        deploy_model, _ = fit(np.arange(n), k_full)
+    else:
+        deploy_model = val_model
 
     bundle = CDEBundle(
-        model=full_model,
+        model=deploy_model,
         standardizer=standardizer,
         channel_names=seq.channel_names,
         static_names=seq.static_names,
@@ -447,6 +456,61 @@ def predict(bundle: CDEBundle, data_path: str | Path) -> pd.Series:
     preds = bundle.standardizer.denorm_target(pred_std)
     index = [e.exp_id for e in seq.experiments]
     return pd.Series(preds, index=index, name=schema.TARGET_COL)
+
+
+# ---------------------------------------------------------------------------
+# Hyperparameter sweep
+# ---------------------------------------------------------------------------
+# Bounded grid; we randomly sample a handful of configurations from it.
+SWEEP_GRID: dict[str, list] = {
+    "epochs": [300, 600],
+    "lr": [1e-3, 3e-3, 1e-2],
+    "hidden_size": [8, 16, 32],
+    "width": [32, 64],
+    "depth": [1, 2],
+    "seed": [0, 1, 2],
+}
+
+
+def sweep(
+    data_path: str | Path,
+    targets_path: str | Path,
+    out_path: str | Path,
+    max_configs: int = 30,
+    seed: int = 0,
+) -> pd.DataFrame:
+    """Train a random sample of <= ``max_configs`` configs and log holdout metrics.
+
+    Each config is fit on the train split only (``refit_all=False``); results —
+    config, final train MSE, and validation RMSE/MAE/MAPE/R2 — are written
+    incrementally to ``out_path`` so a partial sweep is still usable.
+    """
+    keys = list(SWEEP_GRID)
+    all_configs = list(itertools.product(*SWEEP_GRID.values()))
+    rng = np.random.default_rng(seed)
+    n_pick = min(max_configs, len(all_configs))
+    chosen = rng.choice(len(all_configs), size=n_pick, replace=False)
+
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    for i, idx in enumerate(chosen, start=1):
+        cfg = dict(zip(keys, all_configs[idx], strict=True))
+        logger.info("sweep %d/%d: %s", i, n_pick, cfg)
+        _, val_metrics, history = train(
+            data_path, targets_path, refit_all=False, **cfg
+        )
+        rows.append(
+            {
+                **cfg,
+                "train_mse": history[-1]["train_mse"],
+                **{f"val_{k}": v for k, v in val_metrics.items()},
+            }
+        )
+        pd.DataFrame(rows).to_csv(out_path, index=False)  # incremental save
+
+    logger.info("Wrote %d sweep results to %s", len(rows), out_path)
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +599,13 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_pred.add_argument("--model", required=True)
     p_pred.add_argument("--out", required=True)
 
+    p_sweep = sub.add_parser("sweep", help="Sample & evaluate CDE hyperparameters.")
+    p_sweep.add_argument("--data", required=True)
+    p_sweep.add_argument("--targets", required=True)
+    p_sweep.add_argument("--out", default="artifacts/cde_sweep_results.csv")
+    p_sweep.add_argument("--max-configs", type=int, default=30)
+    p_sweep.add_argument("--seed", type=int, default=0)
+
     return parser
 
 
@@ -581,6 +652,11 @@ def _run_predict(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_sweep(args: argparse.Namespace) -> int:
+    sweep(args.data, args.targets, args.out, max_configs=args.max_configs, seed=args.seed)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
     logging.basicConfig(
@@ -591,6 +667,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_train(args)
     if args.command == "predict":
         return _run_predict(args)
+    if args.command == "sweep":
+        return _run_sweep(args)
     return 1
 
 
