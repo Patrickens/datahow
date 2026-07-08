@@ -134,10 +134,11 @@ def _(mo):
     A generic regressor needs a **fixed-length feature vector** per experiment. We
     collapse each variable-length trajectory three complementary ways:
 
-    1. **Gompertz growth-curve parameters** (this section),
-    2. **catch22** — 22 canonical time-series features per state channel,
-    3. **simple aggregates** — first/last/min/max/mean/std/AUC/slope, plus the
-       pass-through `Z:` design scalars.
+    1. **Gompertz growth-curve parameters** (this section) — fit to VCD,
+    2. **TSFEL features** — a curated, interpretable set of statistical & temporal
+       features per state channel (including the **area under the curve**),
+    3. **static + meta** — the pass-through `Z:` design scalars plus the observed
+       duration and number of timepoints.
 
     ### Gompertz fits on VCD
 
@@ -152,7 +153,7 @@ def _(mo):
     *shape of growth* but **not the sequential substrate dynamics** — the ordered
     depletion of glucose then glutamine, feed-driven replenishment, or the lactate
     production→consumption switch seen above. Those coupled, order-dependent effects
-    are exactly what the catch22 features pick up, and what the CDE models most
+    are exactly what the TSFEL features pick up, and what the CDE models most
     naturally by integrating along the trajectory.
     """)
     return
@@ -190,78 +191,44 @@ def _(df, plotting, targets):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### catch22 — the 22 features (applied per state channel)
+    ### Choosing an automated feature library — and landing on TSFEL
 
-    Gompertz captures the *shape of growth*; **catch22** captures everything else about
-    a trajectory's dynamics. It is a curated subset of the 7000+ *hctsa* features,
-    selected to be minimally redundant yet collectively informative across very diverse
-    time series (Lubba et al., 2019, *Data Min. Knowl. Disc.*). We compute all 22 on
-    each `X:` state channel (6 channels → 132 features). Grouped by what they measure:
+    How to turn each channel into features automatically? We iterated:
 
-    **Distribution** (value shape, ignoring time order)
+    - **tsfresh** — the obvious first choice, but it **conflicts with our JAX/diffrax
+      stack** (its `numba`/`stumpy` dependency pins a numpy that JAX won't accept) and
+      emits **200+ features**, more than helps on ~100 samples.
+    - **catch22** — 22 canonical *dynamical-systems* features. It actually worked well
+      here (baseline **R² ≈ 0.82**, and several of its features ranked highly). But the
+      features are generic time-series descriptors, not **domain-meaningful** for a
+      bioprocess — crucially there is **no area-under-the-curve**, and the integral of
+      viable cells (∫VCD) is one of the most physically motivated titer predictors.
+    - **TSFEL** — the compromise we adopted: `numba`-free (one environment),
+      **interpretable** statistical & temporal features that *include* AUC, and
+      **extensible**, which lets us fold Gompertz in as a custom feature.
 
-    - `DN_HistogramMode_5`, `DN_HistogramMode_10` — the mode (most common value) of the
-      z-scored series from a 5- and 10-bin histogram.
+    We keep a curated subset of TSFEL's **statistical** and **temporal** domains
+    (~25 features per `X:` channel; spectral/fractal dropped — little signal on
+    ~10-point series and harder to read). What they measure:
 
-    **Linear autocorrelation & spectrum** (characteristic timescales)
+    **Level & spread (statistical)** — `Mean`, `Median`, `Max`, `Min`, `Standard
+    deviation`, `Variance`, `Root mean square`, `Interquartile range`, `Mean absolute
+    deviation`, `Peak to peak distance`.
 
-    - `CO_f1ecac` — lag at which the autocorrelation first falls to $1/e$ (a
-      decorrelation time).
-    - `CO_FirstMin_ac` — lag of the first minimum of the autocorrelation function.
-    - `SP_Summaries_welch_rect_area_5_1` — power in the lowest fifth of frequencies of
-      the (Welch) power spectrum.
-    - `SP_Summaries_welch_rect_centroid` — centroid (centre of mass) of the power
-      spectrum.
+    **Shape of the value distribution** — `Skewness`, `Kurtosis`, `Entropy`,
+    `Absolute energy`.
 
-    **Nonlinear autocorrelation / phase space**
+    **Accumulation & trend (temporal)** — `Area under the curve` (∫ over time — e.g. the
+    integral of viable cells), `Slope`, `Centroid`, `Mean diff`, `Mean absolute diff`.
 
-    - `CO_HistogramAMI_even_2_5` — automutual information at lag 2 (nonlinear dependence).
-    - `IN_AutoMutualInfoStats_40_gaussian_fmmi` — lag of the first minimum of the
-      automutual information.
-    - `CO_trev_1_num` — time-reversibility statistic (asymmetry under reversing time).
-    - `CO_Embed2_Dist_tau_d_expfit_meandiff` — spread of successive distances in a 2-D
-      time-delay embedding.
+    **Shape of the trajectory in time** — `Autocorrelation`, `Positive turning points`,
+    `Negative turning points`, `Zero crossing rate`, `Neighbourhood peaks`, `Signal
+    distance`.
 
-    **Predictability / forecasting**
-
-    - `FC_LocalSimple_mean1_tauresrat` — how the correlation length changes after
-      differencing.
-    - `FC_LocalSimple_mean3_stderr` — error of predicting the next point from the mean of
-      the last three.
-
-    **Successive differences**
-
-    - `MD_hrv_classic_pnn40` — fraction of successive differences exceeding a threshold
-      (prevalence of large jumps; a heart-rate-variability heritage).
-
-    **Symbolic patterns / motifs**
-
-    - `SB_BinaryStats_mean_longstretch1` — longest run of consecutive values above the
-      mean.
-    - `SB_BinaryStats_diff_longstretch0` — longest run of consecutive decreases.
-    - `SB_MotifThree_quantile_hh` — entropy of successive symbols in a 3-letter (quantile)
-      encoding.
-    - `SB_TransitionMatrix_3ac_sumdiagcov` — statistics of transitions between
-      coarse-grained states.
-
-    **Self-affine scaling** (fluctuation analysis)
-
-    - `SC_FluctAnal_2_dfa_50_1_2_logi_prop_r1` — detrended fluctuation analysis (DFA)
-      scaling.
-    - `SC_FluctAnal_2_rsrangefit_50_1_logi_prop_r1` — rescaled-range (Hurst-like) scaling.
-
-    **Extreme-event timing**
-
-    - `DN_OutlierInclude_p_001_mdrmd`, `DN_OutlierInclude_n_001_mdrmd` — how positive /
-      negative extreme events are distributed through time.
-
-    **Periodicity**
-
-    - `PD_PeriodicityWang_th0_01` — Wang's estimate of the dominant period.
-
-    Recall from the importance plot below that features from several of these groups rank
-    highly (e.g. `SB_BinaryStats_mean_longstretch1` on lactate, `CO_FirstMin_ac` on VCD) —
-    the diversity earns its keep.
+    **Gompertz as a personalised TSFEL feature.** Because TSFEL is extensible, we
+    register the Gompertz parameters as **custom features** (decorated with
+    `@set_domain`) and apply them to VCD — so the growth-curve summary lives inside the
+    same feature pipeline as everything else.
     """)
     return
 
@@ -341,7 +308,7 @@ def _(mo):
     mo.md(r"""
     ### Out-of-fold predictions
 
-    Predicted-vs-actual (left) hugs the diagonal for most runs — CV **R² ≈ 0.82**,
+    Predicted-vs-actual (left) hugs the diagonal for most runs — CV **R² ≈ 0.80**,
     far above the mean predictor (~0). The residuals (right) reveal the main
     weakness: the model **under-predicts the few very high-titer runs**.
 
@@ -369,12 +336,14 @@ def _(mo):
     mo.md(r"""
     ### Which features matter?
 
-    The gain-based importances confirm that **all three feature families
-    contribute**: catch22 features on lactate/VCD/glutamine/ammonia, our own
-    aggregates (notably **`X:VCD_auc`** — the integral of viable cells, the
-    classical mechanistic predictor of product), and the Gompertz **inflection
-    time**. This is a reassuring sanity check: the model leans on features that make
-    biological sense.
+    The gain-based importances are a reassuring sanity check — and a vindication of the
+    TSFEL choice. The top features are **biologically meaningful**: the level and
+    **area under the curve of VCD** (`tsfel_X:VCD_Area under the curve` is essentially
+    the **integral of viable cells**, the classical mechanistic predictor of product),
+    followed by the AUC of lactate, glucose and ammonia and their spread (`Absolute
+    energy`, `Interquartile range`). This is exactly the kind of feature catch22 could
+    **not** provide — its top-ranked features were abstract dynamical descriptors,
+    whereas here the model leans on quantities a process scientist would reach for.
     """)
     return
 
@@ -493,17 +462,70 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### Result and takeaways
+    ### Result
 
     On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.65),
-    exactly as expected — its value is methodological, showing the path we would scale
-    up in a data-rich setting toward hybrid, mechanism-aware models.
+    exactly as expected — with so little data the flexible black-box vector field
+    cannot be pinned down. Its value is methodological: it shows the path we would scale
+    up in a data-rich setting.
+    """)
+    return
 
-    ---
 
-    **Takeaways.** Clean, interpretable feature engineering + a well-regularised,
-    honestly-benchmarked baseline gets us to R² ≈ 0.82. Performance was never the point
-    of this challenge — clarity of the pipeline and of the decisions was.
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### A more interpretable alternative — hybrid models (what DataHow does)
+
+    The neural CDE learns its vector field $f_\theta$ as a **black box**. The natural
+    next step is to replace that neural approximation with an **explicit, mechanistic**
+    structure and keep only a few parameters learnable — a **hybrid model**. Instead of
+    $\mathrm{d}z = f_\theta(z)\,\mathrm{d}X$ we would write the mass-balance ODEs of the
+    bioprocess directly, e.g.
+
+    $$
+    \begin{aligned}
+    \dot{V} &= \big(\mu(\cdot) - \mu_d(\cdot)\big)\,V, \\
+    \dot{G} &= -\,q_{\mathrm{glc}}(\cdot)\,V + F_{\mathrm{glc}}(t), \\
+    \dot{P} &= q_p(\cdot)\,V,
+    \end{aligned}
+    $$
+
+    with $V$ = viable cell density, $G$ = glucose, $P$ = product (titer). Here the
+    **interpretable parameters** are the specific growth/death rates $\mu,\mu_d$, the
+    substrate-uptake rate $q_{\mathrm{glc}}$ (a yield), and the specific productivity
+    $q_p$. The **hybrid** twist: keep this mechanistic skeleton but let small neural
+    networks express how a few of those rates depend on state and conditions (e.g. a
+    Monod term $\mu = \mu_{\max}\,\tfrac{G}{K_G + G}\cdots$ with a learned residual).
+
+    Why this is the destination:
+
+    - **Data efficiency & priors** — yields and $q_p$ have known physical ranges, so we
+      can impose informative priors and identify the model from few runs.
+    - **Interpretability** — every parameter means something to a process scientist; the
+      model can be inspected, challenged, and trusted.
+    - **Extrapolation** — mechanistic structure generalises beyond the training range,
+      directly attacking the high-titer weakness we saw in the baseline.
+
+    This mechanistic ↔ black-box spectrum — mechanistic ODEs at one end, our neural CDE
+    further along, feature-based ML at the other — is exactly the **hybrid modelling**
+    DataHow specialises in. It is out of scope for this challenge and data budget, but it
+    is where a production solution would head.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Takeaways
+
+    - Clean, interpretable feature engineering plus a well-regularised,
+      honestly-benchmarked baseline reaches **R² ≈ 0.80**.
+    - The neural CDE demonstrates the path-based methodology; **hybrid mechanistic
+      models** are the interpretable, data-efficient destination.
+    - Performance was never the point of this challenge — clarity of the pipeline and of
+      the decisions was.
     """)
     return
 

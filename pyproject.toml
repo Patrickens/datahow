@@ -12,13 +12,14 @@ dependencies = [
     "scikit-learn>=1.4",      # CV splitters, metrics, preprocessing
     "scipy>=1.11",            # curve_fit / winsorize for Gompertz features
     "xgboost>=2.0",           # gradient-boosted baseline
-    "pycatch22>=0.4",         # canonical 22-feature time-series extractor
+    # canonical 22-feature time-series extractor
     "jax>=0.4.28",            # numerical backend for diffrax
     "diffrax>=0.6",           # neural CDE / ODE solvers
     "equinox>=0.11",          # neural-network layers on top of JAX
     "optax>=0.2",             # optimizers for training the CDE
     "marimo>=0.23.13",
     "matplotlib>=3.11.0",
+    "tsfel>=0.2.0",
 ]
 
 [project.optional-dependencies]

@@ -165,6 +165,32 @@ recognised marker of healthy, high-producing cultures and tends to coincide with
 higher titer — a genuinely informative signal. Captured as a domain-insight
 comment in the state-trajectory discussion (README + notebook).
 
+## 7. Feature-library switch: catch22 -> TSFEL
+
+**Goal.** Use features that are domain-meaningful for a bioprocess (e.g. AUC).
+
+**Prompt (refined).**
+> catch22's features don't make much sense for this project — I'd want AUC, which
+> it doesn't have. Use TSFEL instead
+> (https://tsfel.readthedocs.io/en/latest/descriptions/feature_list.html).
+> Comment that we considered tsfresh but it failed on dependency conflicts and had
+> 200+ features; that we used catch22 but its features didn't fit (no AUC); and
+> that we went to TSFEL as a compromise. Since TSFEL is extensible, add the
+> Gompertz parameters as a personalised feature. Then strip catch22 from the env
+> and note in the notebook that catch22 reached R² = 0.82 with some features
+> ranking highly.
+
+**Key decisions taken.**
+- Replaced catch22 (`pycatch22`, removed from the env) with **TSFEL**: a curated
+  subset of its statistical + temporal domains (~25 features/`X:` channel),
+  including **Area under the curve** (the integral of viable cells we wanted).
+- Implemented Gompertz parameters as **custom TSFEL features** (`@set_domain`),
+  applied to VCD, so they live in the same extraction pipeline.
+- Baseline is now ~172 features; CV **R² ≈ 0.80** (catch22 was ≈ 0.82 — the switch
+  buys interpretability, not accuracy). With TSFEL, the top-ranked features are
+  the AUC/level of VCD and the AUC of lactate/glucose/ammonia — biologically
+  sensible, unlike catch22's abstract descriptors.
+
 <!--
 Template for subsequent entries:
 

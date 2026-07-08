@@ -42,7 +42,7 @@ from . import schema
 
 logger = logging.getLogger(__name__)
 
-# Shallow, regularised defaults: with ~100 experiments and ~230 features the
+# Shallow, regularised defaults: with ~100 experiments and ~170 features the
 # priority is variance control, not capacity.
 DEFAULT_XGB_PARAMS: dict = {
     "n_estimators": 300,
@@ -77,7 +77,7 @@ class ModelBundle:
     model: TransformedTargetRegressor
     feature_names: list[str]
     gompertz_channel: str
-    catch22_channels: list[str] | None
+    tsfel_channels: list[str] | None
     metadata: dict = field(default_factory=dict)
 
 
@@ -168,7 +168,7 @@ def train(
         model=model,
         feature_names=list(X.columns),
         gompertz_channel=feats.GOMPERTZ_VCD_CHANNEL,
-        catch22_channels=None,
+        tsfel_channels=None,
         metadata={
             "n_train": int(X.shape[0]),
             "n_features": int(X.shape[1]),
@@ -183,7 +183,7 @@ def train(
 def predict(bundle: ModelBundle, data_path: str | Path) -> pd.Series:
     """Predict final titer for every experiment in ``data_path``."""
     parsed = feats.dp.read_inputs(data_path)
-    features = feats.build_baseline_features(parsed, bundle.catch22_channels)
+    features = feats.build_baseline_features(parsed, bundle.tsfel_channels)
     # Align to the training feature order; unseen/absent columns become NaN,
     # which XGBoost handles natively.
     features = features.reindex(columns=bundle.feature_names)

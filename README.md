@@ -71,15 +71,22 @@ feature vector we combine:
   differing lengths gracefully. Its limitation: a single monotone sigmoid
   **cannot capture sequential substrate dynamics** — the ordered depletion of
   glucose then glutamine, feed-driven replenishment, or the lactate
-  production→consumption switch. Those coupled dynamics are left to catch22 and
-  are handled more naturally by the CDE.
-- **Automated time-series features (catch22).** The canonical *catch22* set —
-  22 non-redundant, highly informative features per channel (trend,
-  autocorrelation, spectral, distribution, entropy, …). Deliberately compact:
-  22 features/channel suits ~100 experiments and stays numba-free, so it shares
-  one environment with the JAX/diffrax stack.
-- Plus the pass-through `Z:` design scalars and simple aggregates (final value,
-  AUC — e.g. the integral of viable cells — and slope).
+  production→consumption switch. Those coupled dynamics are left to TSFEL and are
+  handled more naturally by the CDE. Gompertz is folded in as a **custom TSFEL
+  feature**, so it lives in the same extraction pipeline.
+- **Automated time-series features (TSFEL).** A curated set of interpretable
+  *statistical* and *temporal* features per `X:` state channel (~25 each),
+  including the **area under the curve** (e.g. the integral of viable cells),
+  slope, RMS, entropy, and turning points. See *Choosing a feature library*
+  below for why TSFEL over tsfresh/catch22.
+- Plus the pass-through `Z:` design scalars and observed duration / length.
+
+**Choosing a feature library.** We considered **tsfresh** (conflicts with the
+JAX/diffrax stack via its numba dependency, and emits 200+ features), then tried
+**catch22** (worked — baseline R² ≈ 0.82 — but its 22 generic dynamical-systems
+features aren't domain-meaningful; notably no AUC). We settled on **TSFEL**:
+numba-free (one environment), interpretable, includes the bioprocess-relevant
+features we want, and extensible enough to host the Gompertz custom feature.
 
 ### 2. Neural Controlled Differential Equation (diffrax)
 
@@ -127,9 +134,9 @@ the CDE uses rectilinear interpolation:
 ![Gompertz fits](figures/gompertz_fits.png)
 
 **Baseline diagnostics** — out-of-fold predictions (the model under-predicts the
-few very high-titer runs) and the feature importances, which draw on all three
-feature families (catch22, the `X:VCD_auc` integral-of-viable-cells, and Gompertz
-parameters):
+few very high-titer runs) and the feature importances, led by biologically
+meaningful TSFEL features (the **area under the VCD curve** = integral of viable
+cells, plus AUC of lactate/glucose/ammonia):
 
 ![Regression CV](figures/regression_cv.png)
 
@@ -144,7 +151,7 @@ targets arrive, but the ordering matches expectations.
 | Model | RMSE | MAPE | R² | Protocol |
 | ----- | ---- | ---- | -- | -------- |
 | Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
-| **XGBoost baseline** | **~308** | **~12%** | **~0.82** | repeated 5-fold CV |
+| **XGBoost baseline** | **~309** | **~12%** | **~0.80** | repeated 5-fold CV |
 | Neural CDE | ~610 | ~16% | ~0.65 | 20% holdout, 300 epochs |
 
 The XGBoost baseline is the stronger model here, as anticipated for a small
@@ -168,7 +175,7 @@ datahow/
 ├── src/titer_prediction/
 │   ├── schema.py               # Z:/W:/X: prefix conventions + column groups
 │   ├── data_preprocessing.py   # raw CSV -> tabular features + ragged sequences
-│   ├── features.py             # baseline features: Gompertz + catch22 + aggregates
+│   ├── features.py             # baseline features: Gompertz + TSFEL + static
 │   ├── regression.py           # XGBoost baseline, CV, CLI
 │   └── cde.py                  # neural CDE via diffrax, CLI
 └── tests/
