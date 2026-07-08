@@ -76,6 +76,27 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ### The target: final titer
+
+    The violin below (with every experiment as a jittered point) shows the target's
+    distribution. It is **right-skewed** with a long high-titer tail — the mean sits
+    above the median. Two consequences we act on later: we train on `log1p(titer)` to
+    tame the skew, and the sparse high-titer tail is what makes those (most valuable)
+    runs hardest to predict.
+    """)
+    return
+
+
+@app.cell
+def _(plotting, targets):
+    fig_titer = plotting.plot_titer_distribution(targets)
+    fig_titer
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ### Measured state trajectories
 
     Below, every line is one experiment, coloured by its **final titer** (dark =
@@ -84,9 +105,16 @@ def _(mo):
 
     - **VCD** grows sigmoidally then plateaus/declines — the classic growth curve.
       Higher, more sustained growth trends toward higher titer.
-    - **Substrates** (glucose, glutamine) are consumed and replenished by feeding.
-    - **Byproducts** (lactate, ammonia) accumulate as waste metabolism proceeds — but
-      look closely at the **longer runs, where lactate rises and then falls again**.
+    - **Substrates** (glucose, glutamine) *rise* over most of the run — which can look
+      surprising. It is real, not a plotting artefact: these are **fed**, and in this
+      dataset the **feed rate exceeds cellular uptake**, so they *accumulate* while
+      feeding is on and are only **drawn back down once the feed stops** (the mean
+      glucose peaks ~day 10 at ≈12 and falls to ≈5 by day 14). The early day-1/2 dip,
+      before feeding starts, is the pure-consumption phase.
+    - **Byproducts** (lactate, ammonia) accumulate as waste metabolism proceeds.
+      Ammonia is *produced* from glutamine/amino-acid catabolism (it is not fed), so
+      its steady rise is expected. Lactate is the interesting one — in the **longer
+      runs it rises and then falls again**.
       This is the classic **lactate metabolic shift**: the cells switch from net
       lactate *production* (glycolytic overflow) to net *consumption*, typically once
       glucose starts to become limiting. It is a well-known marker of healthy,

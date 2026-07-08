@@ -55,6 +55,43 @@ def _add_titer_colorbar(fig, norm: Normalize, label: str = "Final titer") -> Non
 
 
 # ---------------------------------------------------------------------------
+# 0. Target distribution
+# ---------------------------------------------------------------------------
+def plot_titer_distribution(targets: pd.Series):
+    """Violin + jittered strip of the final-titer target across experiments."""
+    values = targets.to_numpy(dtype=float)
+    norm = _titer_norm(targets)
+
+    fig, ax = plt.subplots(figsize=(5.5, 6), constrained_layout=True)
+    parts = ax.violinplot(
+        values, showmeans=False, showmedians=False, showextrema=False, widths=0.8
+    )
+    for body in parts["bodies"]:
+        body.set_facecolor("#b3cde3")
+        body.set_alpha(0.4)
+        body.set_edgecolor("grey")
+
+    # Jittered points, coloured by titer.
+    rng = np.random.default_rng(0)
+    jitter = 1 + (rng.random(values.size) - 0.5) * 0.18
+    ax.scatter(
+        jitter, values, c=_CMAP(norm(values)), s=28, edgecolor="k", linewidth=0.3, zorder=3
+    )
+
+    median, mean = float(np.median(values)), float(np.mean(values))
+    ax.axhline(median, ls="--", color="#444444", lw=1, label=f"median = {median:.0f}")
+    ax.axhline(mean, ls=":", color="#d62728", lw=1, label=f"mean = {mean:.0f}")
+    ax.set(
+        xticks=[1],
+        xticklabels=[f"train ({values.size} experiments)"],
+        ylabel="Final titer",
+        title="Distribution of the target (final titer)",
+    )
+    ax.legend(fontsize=9, loc="upper right")
+    return fig
+
+
+# ---------------------------------------------------------------------------
 # 1. Input time courses
 # ---------------------------------------------------------------------------
 def _plot_titer_colored(ax, df, targets, column, norm, step=False):
@@ -182,21 +219,28 @@ def baseline_matrix() -> tuple[pd.DataFrame, pd.Series]:
 
 
 def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = None):
-    """Out-of-fold predicted vs. actual titer + residuals for the baseline."""
+    """Out-of-fold predicted vs. actual titer + residuals for the baseline.
+
+    The scatter uses out-of-fold predictions from one representative 5-fold split;
+    the headline R²/RMSE in the title are the **repeated** 5-fold CV means (the
+    same protocol reported in the README/CLI), so the figure and text agree.
+    """
     if X is None or y is None:
         X, y = baseline_matrix()
     oof = cross_val_predict(reg.build_model(), X, y, cv=KFold(5, shuffle=True, random_state=0))
     resid = y.to_numpy() - oof
 
+    # Robust headline metrics: repeated 5-fold CV (matches regression.py / README).
+    cv = reg.cross_validate(X, y)["xgboost"]
+    r2, rmse = cv["r2"], cv["rmse"]
+
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
     lo, hi = float(min(y.min(), oof.min())), float(max(y.max(), oof.max()))
     axes[0].plot([lo, hi], [lo, hi], "--", color="grey", lw=1)
     axes[0].scatter(y, oof, s=22, alpha=0.7, color="#1f77b4")
-    rmse = float(np.sqrt(np.mean(resid**2)))
-    r2 = 1 - np.sum(resid**2) / np.sum((y - y.mean()) ** 2)
     axes[0].set(
         xlabel="Actual titer", ylabel="Predicted titer (out-of-fold)",
-        title=f"XGBoost baseline — 5-fold CV (R²={r2:.2f}, RMSE={rmse:.0f})",
+        title=f"XGBoost baseline — repeated 5-fold CV (R²={r2:.2f}, RMSE={rmse:.0f})",
     )
     axes[1].axhline(0, ls="--", color="grey", lw=1)
     axes[1].scatter(oof, resid, s=22, alpha=0.7, color="#ff7f0e")
@@ -232,6 +276,7 @@ def main() -> None:
     X, yt = baseline_matrix()  # built once, reused for the regression figures
 
     figures = {
+        "titer_distribution.png": plot_titer_distribution(targets),
         "input_state_timecourses.png": plot_state_timecourses(df, targets),
         "input_control_timecourses.png": plot_control_timecourses(df, targets),
         "gompertz_fits.png": plot_gompertz_examples(df, targets),

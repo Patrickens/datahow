@@ -112,7 +112,18 @@ A full, narrated walk-through lives in the [`exploration.py`](exploration.py)
 marimo notebook (`uv run marimo edit exploration.py`); figures are regenerated
 with `uv run python -m titer_prediction.plotting`. Highlights:
 
-**Measured states**, one line per experiment coloured by final titer:
+**The target** is right-skewed with a long high-titer tail (mean > median) — hence
+the `log1p` transform, and why the sparse high-titer runs are the hardest to
+predict:
+
+![Titer distribution](figures/titer_distribution.png)
+
+**Measured states**, one line per experiment coloured by final titer. Note the
+substrates (glucose, glutamine) *rise*: they are fed faster than consumed, so they
+accumulate while feeding is on and only draw down once it stops. Ammonia rises as a
+metabolic byproduct (it is not fed):
+
+![State trajectories](figures/input_state_timecourses.png)
 
 ![State trajectories](figures/input_state_timecourses.png)
 
