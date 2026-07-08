@@ -255,8 +255,11 @@ class NeuralCDE(eqx.Module):
         k_init, k_func, k_out = jax.random.split(key, 3)
         self.hidden_size = hidden_size
         self.n_w = n_w
+        # z0 is set from the static design AND the initial observation C0 (see
+        # __call__), hence in_size = n_static + n_channels.
         self.initial = eqx.nn.MLP(
-            n_static, hidden_size, width, depth, activation=jax.nn.softplus, key=k_init
+            n_static + n_channels, hidden_size, width, depth,
+            activation=jax.nn.softplus, key=k_init,
         )
         self.func = CDEFunc(hidden_size, n_channels, width, depth, key=k_func)
         self.readout = eqx.nn.Linear(hidden_size, 1, key=k_out)
@@ -268,7 +271,11 @@ class NeuralCDE(eqx.Module):
         control = dfx.LinearInterpolation(s, path)
         term = dfx.ControlTerm(self.func, control)
 
-        z0 = self.initial(static)
+        # Initialise from the static design and the initial observation
+        # C0 = ys[0] = [t0, W0..., X0...]. A CDE only sees control *increments*, so
+        # the absolute starting state (initial VCD, substrate levels) would be
+        # invisible unless injected into z0 here.
+        z0 = self.initial(jnp.concatenate([static, ys[0]]))
         sol = dfx.diffeqsolve(
             term,
             dfx.Heun(),
