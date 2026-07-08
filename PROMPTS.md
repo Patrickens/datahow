@@ -272,6 +272,38 @@ Driven by `claude_cde_prompt.txt`; small commit per step.
   with the sweep/repeated-holdout as the stable read.
 - Delivered as five small commits (`8b81388` … `45461e5`).
 
+## 11. Part 2 — inference microservice
+
+**Goal.** A clean, typed, tested, Dockerized FastAPI service around the trained
+model implementing the OpenAPI spec (`GET /health`, `POST /predict`), reusing the
+training preprocessing rather than re-implementing model logic.
+
+**Prompt (refined).** From `claude_part2_inference_service_prompt.txt`: build a
+`titer_prediction/service/` package (FastAPI + Pydantic) with config + one-time
+model loading, DTOs matching the YAML (`timestamps` + `values` with `Z:`/`W:`/`X:`
+prefix rules), payload→model-input conversion, `/health` and `/predict`, a batch
+CSV→template utility, tests (mocked model), Docker, tooling, and README — small
+commits per step.
+
+**Key decisions taken.**
+- **One seam:** `read_inputs` now accepts a DataFrame, so both `cde.predict` and
+  `regression.predict` serve an in-memory payload frame — the API never
+  duplicates model logic.
+- **Model-agnostic** service: `load_predictor` dispatches by artifact extension
+  (`.joblib` → XGBoost, `.eqx` → CDE), wrapped in a `Predictor` protocol
+  (mockable). **Default = XGBoost baseline** (user choice: report both, baseline
+  as the main one — faster, stronger, lighter). Model modules imported lazily.
+- **Validation:** Pydantic DTOs enforce the timestamp/`Z:`/`W:`/`X:` rules (→ 422);
+  the predictor checks the payload matches the model's trained schema. Handlers map
+  `PayloadError`→422, `ModelNotLoadedError`→503, other `ServiceError`→500. App
+  starts even without a model (`/health` reports it).
+- Thin routes + DI (`get_predictor`, overridden in tests). `titer-batch-predict`
+  writes the template CSV. Dockerfile mounts the model (not baked, confidential);
+  Makefile for dev commands. Tests use a mocked predictor (no heavy inference).
+- Verified live: `uvicorn` boot → `/health` ok, `/predict` returns a titer,
+  bad payloads → 422; full suite 23 passed; ruff clean. (Docker build pending a
+  running daemon.) Delivered as ~11 small commits.
+
 <!--
 Template for subsequent entries:
 

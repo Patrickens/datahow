@@ -51,8 +51,7 @@ class PredictRequest(BaseModel):
                     )
             elif len(arr) != n:
                 raise ValueError(
-                    f"variable {name!r} must have length {n} (matching timestamps), "
-                    f"got {len(arr)}"
+                    f"variable {name!r} must have length {n} (matching timestamps), got {len(arr)}"
                 )
         for prefix in _PREFIXES:
             if seen[prefix] == 0:

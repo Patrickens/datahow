@@ -50,7 +50,9 @@ def experiment_to_request(group: pd.DataFrame) -> PredictRequest:
     )
 
 
-def batch_predict(data_path: str | Path, model_path: str | Path, out_path: str | Path) -> pd.DataFrame:
+def batch_predict(
+    data_path: str | Path, model_path: str | Path, out_path: str | Path
+) -> pd.DataFrame:
     """Predict every experiment in ``data_path`` and write a template CSV."""
     predictor = load_predictor(model_path)
     df = pd.read_csv(data_path)

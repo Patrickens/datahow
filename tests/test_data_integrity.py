@@ -201,7 +201,12 @@ def test_cde_prediction_is_padding_invariant():
     from titer_prediction import cde
 
     model = cde.NeuralCDE(
-        n_static=2, n_channels=3, n_w=1, hidden_size=4, width=8, depth=1,
+        n_static=2,
+        n_channels=3,
+        n_w=1,
+        hidden_size=4,
+        width=8,
+        depth=1,
         key=jax.random.PRNGKey(0),
     )
     ys = jnp.array(

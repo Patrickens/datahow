@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -77,7 +78,7 @@ def health(request: Request) -> HealthResponse:
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(
-    request: PredictRequest, predictor: Predictor = Depends(get_predictor)
+    request: PredictRequest, predictor: Annotated[Predictor, Depends(get_predictor)]
 ) -> PredictResponse:
     """Predict the final titer for one experiment."""
     try:
