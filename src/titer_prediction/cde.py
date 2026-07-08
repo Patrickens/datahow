@@ -7,12 +7,15 @@ two core challenges:
 * **Variable length** is handled natively — the CDE integrates whatever path it
   is given. Batches are padded by holding the last observation (a flat,
   zero-contribution tail), so no masking is needed.
-* **Discontinuous controls** are respected with **rectilinear (staircase)**
-  interpolation rather than linear, which would fabricate ramps across feed
-  on/off switches. Because a staircase has zero-duration jumps in real time, we
-  integrate over a strictly-increasing *path parameter* ``s`` (carrying real time
-  as a path channel) so every jump is captured — the standard trick from Morrill
-  et al. (2021), "Neural CDEs for Online Prediction".
+* **Mixed interpolation** encodes the right inductive bias per channel group:
+  the ``W:`` controls are **step-interpolated** (feeds and setpoint switches are
+  genuinely discontinuous — linear interpolation would fabricate ramps), while
+  the ``X:`` state observations are **linearly interpolated** (they are sampled
+  from continuous-ish process variables, so a staircase would fabricate jumps).
+  Real time is carried as channel 0. Because control jumps have zero duration in
+  real time, we integrate over a strictly-increasing *path parameter* ``s`` so
+  every jump is seen by the solver (cf. Kidger et al.; Morrill et al. 2021 on
+  path parametrisation for neural CDEs). See :func:`make_mixed_cde_path`.
 
 The static ``Z:`` design scalars initialise the hidden state (``z0``); the
 terminal hidden state is read out to the (standardised, log) titer.
@@ -145,6 +148,49 @@ def build_arrays(
 
 
 # ---------------------------------------------------------------------------
+# Mixed control path
+# ---------------------------------------------------------------------------
+def make_mixed_cde_path(ys: jnp.ndarray, n_w: int) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Build the CDE control path with per-group interpolation, over parameter ``s``.
+
+    Args:
+        ys: ``(T, C)`` augmented observations, columns ordered ``[real time,
+            W: controls (n_w), X: states]``.
+        n_w: number of ``W:`` control channels.
+
+    Returns:
+        ``(s, path_aug)`` where ``s`` is a strictly-increasing path parameter of
+        length ``2T - 1`` and ``path_aug`` is ``(2T - 1, C)``.
+
+    Construction, per interval between real observations ``k -> k+1``:
+
+    * a **flow** segment advances real time and the ``X:`` states *linearly* while
+      the ``W:`` controls are held fixed; then
+    * a **jump** segment holds real time and ``X:`` fixed while the ``W:`` controls
+      move to their next value (a step).
+
+    So ``W:`` is step-interpolated and ``X:`` (and time) is piecewise linear, all
+    within a single path. A flat padded tail (repeated last row) yields zero
+    increments in both segment types, so it contributes nothing to the integral.
+    Integration runs over ``s`` (strictly increasing) rather than real time, so the
+    zero-real-duration control jumps still have a finite extent for the solver.
+    """
+    length = ys.shape[0]
+    # Two interleavings of the row index into the 2T-1 knot grid:
+    move = jnp.repeat(jnp.arange(length), 2)[1:]  # time & X: move-then-hold (linear)
+    hold = jnp.repeat(jnp.arange(length), 2)[:-1]  # W: hold-then-move (step)
+
+    ys_move, ys_hold = ys[move], ys[hold]
+    time = ys_move[:, 0:1]
+    controls = ys_hold[:, 1 : 1 + n_w]
+    states = ys_move[:, 1 + n_w :]
+
+    path_aug = jnp.concatenate([time, controls, states], axis=1)
+    s = jnp.arange(path_aug.shape[0], dtype=ys.dtype)
+    return s, path_aug
+
+
+# ---------------------------------------------------------------------------
 # Model
 # ---------------------------------------------------------------------------
 class CDEFunc(eqx.Module):
@@ -178,10 +224,12 @@ class NeuralCDE(eqx.Module):
     func: CDEFunc
     readout: eqx.nn.Linear
     hidden_size: int = eqx.field(static=True)
+    n_w: int = eqx.field(static=True)
 
-    def __init__(self, n_static, n_channels, hidden_size, width, depth, *, key):
+    def __init__(self, n_static, n_channels, n_w, hidden_size, width, depth, *, key):
         k_init, k_func, k_out = jax.random.split(key, 3)
         self.hidden_size = hidden_size
+        self.n_w = n_w
         self.initial = eqx.nn.MLP(
             n_static, hidden_size, width, depth, activation=jax.nn.softplus, key=k_init
         )
@@ -189,12 +237,10 @@ class NeuralCDE(eqx.Module):
         self.readout = eqx.nn.Linear(hidden_size, 1, key=k_out)
 
     def __call__(self, ys: jnp.ndarray, static: jnp.ndarray) -> jnp.ndarray:
-        # Staircase path; integrate over the strictly-increasing knot index so
-        # the zero-duration control jumps are captured.
-        idx = jnp.arange(ys.shape[0], dtype=ys.dtype)
-        _, yr = dfx.rectilinear_interpolation(idx, ys)
-        s = jnp.arange(yr.shape[0], dtype=ys.dtype)
-        control = dfx.LinearInterpolation(s, yr)
+        # Mixed path: W: step-interpolated, X: linear, time as channel 0. Integrate
+        # over the strictly-increasing path parameter s so control jumps are seen.
+        s, path = make_mixed_cde_path(ys, self.n_w)
+        control = dfx.LinearInterpolation(s, path)
         term = dfx.ControlTerm(self.func, control)
 
         z0 = self.initial(static)
@@ -255,6 +301,8 @@ def train(
     standardizer = fit_standardizer(seq)
     ys_np, static_np, y_np = build_arrays(seq, standardizer)
     raw_titer = np.array([e.target for e in seq.experiments], dtype=float)
+    # Dynamic channels are ordered W: then X:, so the W: count is the split point.
+    n_w = sum(c.startswith(schema.CONTROL_PREFIX) for c in seq.channel_names)
 
     n = ys_np.shape[0]
     rng = np.random.default_rng(seed)
@@ -266,11 +314,12 @@ def train(
         "hidden_size": hidden_size, "width": width, "depth": depth,
         "epochs": epochs, "lr": lr, "val_frac": val_frac, "seed": seed,
         "n_channels": int(ys_np.shape[2]), "n_static": int(static_np.shape[1]),
+        "n_w": int(n_w),
     }
 
     def fit(indices: np.ndarray, key) -> NeuralCDE:
         model = NeuralCDE(
-            static_np.shape[1], ys_np.shape[2], hidden_size, width, depth, key=key
+            static_np.shape[1], ys_np.shape[2], n_w, hidden_size, width, depth, key=key
         )
         optim = optax.adam(lr)
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
@@ -365,7 +414,7 @@ def save_bundle(bundle: CDEBundle, path: str | Path) -> None:
 def _skeleton(config: dict) -> NeuralCDE:
     """Rebuild an untrained model with the right shapes for deserialisation."""
     return NeuralCDE(
-        config["n_static"], config["n_channels"], config["hidden_size"],
+        config["n_static"], config["n_channels"], config["n_w"], config["hidden_size"],
         config["width"], config["depth"], key=jax.random.PRNGKey(0),
     )
 
