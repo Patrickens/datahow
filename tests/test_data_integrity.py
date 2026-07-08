@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 
 from titer_prediction import data_preprocessing as dp
+from titer_prediction import features as feats
 from titer_prediction import schema
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
@@ -114,6 +115,39 @@ def test_channel_aggregates_are_correct(synthetic_long):
     assert features.loc["A", "X:VCD_max"] == 4.0
     # Trapezoidal AUC of [1,2,4] over [0,1,2] = 1.5 + 3.0 = 4.5
     assert features.loc["A", "X:VCD_auc"] == pytest.approx(4.5)
+
+
+def test_substrate_consumption_features_use_matching_feeds_only():
+    df = pd.DataFrame(
+        {
+            "Exp": ["A", "A", "A"],
+            "Time[day]": [0.0, 1.0, 2.0],
+            "W:FeedGlc": [0.0, 2.0, 0.0],
+            "W:FeedGln": [0.0, 1.0, 1.0],
+            "X:VCD": [1.0, 2.0, 3.0],
+            "X:Glc": [10.0, 9.0, 7.0],
+            "X:Gln": [3.0, 2.0, 1.0],
+            "X:Amm": [0.0, 2.0, 4.0],
+            "X:Lac": [1.0, 1.5, 0.5],
+        }
+    )
+
+    features = feats.substrate_consumption_features(df)
+    row = features.loc["A"]
+
+    assert row["bio_X:Glc_feed_auc"] == pytest.approx(2.0)
+    assert row["bio_X:Glc_net_consumed"] == pytest.approx(5.0)
+    assert row["bio_X:Glc_net_consumed_per_day"] == pytest.approx(2.5)
+    assert row["bio_X:Glc_net_consumed_per_vcd_auc"] == pytest.approx(1.25)
+
+    assert row["bio_X:Gln_feed_auc"] == pytest.approx(1.5)
+    assert row["bio_X:Gln_net_consumed"] == pytest.approx(3.5)
+
+    assert "bio_X:Amm_feed_auc" not in features.columns
+    assert "bio_X:Lac_feed_auc" not in features.columns
+    assert row["bio_X:Amm_initial_plus_added"] == pytest.approx(0.0)
+    assert row["bio_X:Amm_net_consumed"] == pytest.approx(-4.0)
+    assert row["bio_X:Lac_net_consumed"] == pytest.approx(0.5)
 
 
 def _write_synthetic(synthetic_long, tmp_path):
