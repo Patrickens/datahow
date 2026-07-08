@@ -603,6 +603,11 @@ def _(mo):
     Next, the same path plotted against $s$. On the shaded segments the **control jumps
     while real time is held flat** — a physical discontinuity becomes a segment of
     *finite* length in $s$, which is exactly why the solver can see it.
+
+    Padding is not extra process time. It is only a rectangular-array trick for
+    batching. Because the full final row is repeated, including the real-time channel,
+    the control path is constant on the padded tail: $C(s)=C(S)$ and $\mathrm{d}C=0$.
+    Since $\mathrm{d}h=f_\theta(h)\,\mathrm{d}C$, a pure CDE receives no update there.
     """)
     return
 
@@ -611,24 +616,6 @@ def _(mo):
 def _(plotting):
     fig_params = plotting.plot_path_parameter()
     fig_params
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
-    The same thing as **path geometry** in (real time, control) space: horizontal arrows
-    are *flow* segments (real time and `X:` advance, `W:` held); vertical arrows are
-    *jump* segments (`W:` steps, real time and `X:` held). The neural CDE integrates
-    along this staircase-of-time-and-controls.
-    """)
-    return
-
-
-@app.cell
-def _(plotting):
-    fig_geom = plotting.plot_path_geometry()
-    fig_geom
     return
 
 

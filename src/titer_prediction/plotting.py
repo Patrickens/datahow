@@ -319,53 +319,22 @@ def plot_path_parameter():
     return fig
 
 
-def plot_path_geometry():
-    """Path traced in (real time, control) space: horizontal flows, vertical jumps."""
-    from matplotlib.lines import Line2D
-
-    _, _, _, s, path = _toy_cde_path()
-    time_s, w_s = path[:, 0], path[:, 1]
-    fig, ax = plt.subplots(figsize=(6.5, 5), constrained_layout=True)
-    for i in range(len(s) - 1):
-        is_jump = abs(w_s[i + 1] - w_s[i]) > 1e-9
-        ax.annotate(
-            "",
-            xy=(time_s[i + 1], w_s[i + 1]),
-            xytext=(time_s[i], w_s[i]),
-            arrowprops=dict(arrowstyle="->", lw=2, color="#1f77b4" if is_jump else "#2ca02c"),
-        )
-    ax.scatter(time_s, w_s, color="k", s=25, zorder=3)
-    ax.set(
-        xlabel="real time (channel 0)",
-        ylabel="feed W (channel)",
-        title="Path geometry: horizontal = time flows, vertical = control jumps",
-    )
-    ax.legend(
-        handles=[
-            Line2D([], [], color="#2ca02c", label="flow: time & X move, W held"),
-            Line2D([], [], color="#1f77b4", label="jump: W moves, time & X held"),
-        ],
-        fontsize=8,
-    )
-    return fig
-
-
 def plot_cde_toy_state():
     """Toy hidden state under a fixed field: it updates on flows AND control jumps."""
     _, _, _, s, path = _toy_cde_path()
-    # A trivial constant vector field f, so dz = f . dC(s) (a linear CDE).
+    # A trivial constant vector field f, so dh = f . dC(s) (a linear CDE).
     f = np.array([0.2, 0.5, 0.3])  # weights on [time, W, X] increments
-    dz = np.diff(path, axis=0) @ f
-    z = np.concatenate([[0.0], np.cumsum(dz)])
+    dh = np.diff(path, axis=0) @ f
+    h = np.concatenate([[0.0], np.cumsum(dh)])
     w_s = path[:, 1]
 
     fig, ax = plt.subplots(figsize=(7, 4), constrained_layout=True)
-    ax.plot(s, z, "-o", color="#9467bd")
+    ax.plot(s, h, "-o", color="#9467bd")
     for i in np.where(np.abs(np.diff(w_s)) > 1e-9)[0]:
         ax.axvspan(s[i], s[i + 1], color="#1f77b4", alpha=0.15)
     ax.set(
         xlabel="path parameter s",
-        ylabel="toy hidden state z(s)",
+        ylabel="toy hidden state h(s)",
         title="Hidden state updates on time increments AND control jumps\n"
         "(shaded = control-jump segments)",
     )
@@ -418,7 +387,6 @@ def main() -> None:
         "feature_importance.png": plot_feature_importance(X, yt),
         "cde_interpolation.png": plot_interpolation_comparison(),
         "cde_path_parameter.png": plot_path_parameter(),
-        "cde_path_geometry.png": plot_path_geometry(),
         "cde_toy_state.png": plot_cde_toy_state(),
         "cde_training_curves.png": plot_cde_training_curves(),
     }

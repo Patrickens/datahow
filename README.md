@@ -117,6 +117,11 @@ hidden state maps to titer. It handles variable length and irregular sampling
 natively (batches are padded by holding the last observation — a flat,
 zero-contribution tail — so no masking is needed).
 
+Padding is not extra process time. It is only a rectangular-array trick for
+batching. Because the full final row is repeated, including the real-time
+channel, the control path is constant on the padded tail: `C(s) = C(S)` and
+`dC(s) = 0`. Since `dh = f_theta(h) dC`, a pure CDE receives no update there.
+
 **What initialises the hidden state.** The input path is
 `C(s) = [t(s), W(s), X_obs(s)]` in `R^c`, with
 `c = 1 + n_W + n_X`. Static variables `Z` are used only for initialisation:
