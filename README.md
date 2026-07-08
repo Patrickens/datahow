@@ -4,9 +4,11 @@ Predict the **final product titer** of a simulated upstream mAb bioprocess from
 per-experiment time-series data, and (Part 2) serve the model behind a REST
 inference API.
 
-> Status: **work in progress.** Part 1 is functional end-to-end — preprocessing,
-> the XGBoost baseline, and the neural CDE all train and predict from the CLI and
-> are benchmarked below. The Part 2 inference server is the next step.
+> Status: both parts functional end-to-end. **Part 1** — preprocessing, the
+> XGBoost baseline, and the neural CDE all train and predict from the CLI and are
+> benchmarked below. **Part 2** — a FastAPI inference microservice (`/health`,
+> `/predict`) with typed DTOs, tests, and Docker (see *Part 2 — Inference
+> microservice*).
 
 ## Problem understanding
 
@@ -219,16 +221,24 @@ datahow/
 ├── uv.lock                 # pinned, reproducible environment
 ├── README.md
 ├── PROMPTS.md              # log of AI prompts + decisions (transparency)
+├── Dockerfile / Makefile   # inference-service image + dev commands
+├── exploration.py          # marimo notebook (data -> preprocessing -> models)
 ├── data/                   # provided CSVs — git-ignored (see below)
 ├── artifacts/              # generated features / trained models — git-ignored
 ├── src/titer_prediction/
 │   ├── schema.py               # Z:/W:/X: prefix conventions + column groups
-│   ├── data_preprocessing.py   # raw CSV -> tabular features + ragged sequences
+│   ├── data_preprocessing.py   # raw CSV/frame -> tabular features + ragged sequences
 │   ├── features.py             # baseline features: Gompertz + TSFEL + static
 │   ├── regression.py           # XGBoost baseline, CV, CLI
-│   └── cde.py                  # neural CDE via diffrax, CLI
+│   ├── cde.py                  # neural CDE via diffrax, CLI
+│   ├── sweep.py                # neural-CDE hyperparameter sweep (CLI)
+│   ├── plotting.py             # shared figure helpers
+│   └── service/                # Part 2: FastAPI inference microservice
+│       ├── app.py  config.py  dto.py  errors.py
+│       ├── model_loader.py  predictor.py  batch_predict.py
 └── tests/
-    └── test_data_integrity.py  # single project-wide test file
+    ├── test_data_integrity.py  # data-integrity + preprocessing/model tests
+    └── test_service.py         # inference-service tests (mocked model)
 ```
 
 ## Getting started
@@ -274,10 +284,78 @@ The raw challenge CSVs and the OpenAPI spec are treated as confidential and are
 **not** committed (`data/` is git-ignored). Reviewers should drop the provided
 files into `data/` as shown above.
 
+## Part 2 — Inference microservice
+
+A small FastAPI service (`src/titer_prediction/service/`) serves the trained
+model behind the provided OpenAPI spec (`GET /health`, `POST /predict`).
+
+**Architecture.** Thin routes; all model work goes through `predict_one`, which
+turns one `/predict` payload into a one-experiment DataFrame (`payload_to_frame`)
+and runs it through the **same `read_inputs` preprocessing as training** — the API
+never re-implements model logic. Layers: `dto.py` (typed, validated requests),
+`model_loader.py` (loads a bundle once at startup; **model-agnostic**, dispatching
+by artifact extension), `predictor.py` (payload → frame → prediction), `config.py`
+(`MODEL_PATH`), `errors.py` + handlers (→ 422 / 503 / 500), `app.py` (endpoints).
+
+**Model selection.** `MODEL_PATH` chooses the artifact: `*.joblib` → XGBoost
+baseline (the **default**, `artifacts/xgb_baseline.joblib` — fast, no per-request
+ODE solve), `*.eqx` → neural CDE. If the artifact is missing the app still starts;
+`/health` reports `model_loaded: false` and `/predict` returns 503.
+
+```bash
+# Run locally (default model = XGBoost baseline)
+uv run uvicorn titer_prediction.service.app:app --host 0.0.0.0 --port 8000
+# ...or: make run-api      (serve the CDE: MODEL_PATH=artifacts/cde.eqx make run-api)
+
+curl localhost:8000/health
+# {"status":"ok","model_loaded":true}
+```
+
+`POST /predict` (one experiment; `Z:` scalars are single-element arrays, `W:`/`X:`
+arrays match `timestamps`):
+
+```jsonc
+{
+  "timestamps": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+  "values": {
+    "Z:FeedStart": [3.0], "Z:FeedEnd": [11.0], "Z:Stir": [194.7], "Z:DO": [76.1],
+    "W:temp": [36.3, "…15 values"], "W:FeedGlc": ["…"],
+    "X:VCD": ["…15 values"], "X:Glc": ["…"], "X:Lysed": ["…"]
+  },
+  "experiment_id": "Test Exp 1"          // optional
+}
+// -> {"prediction": 2138.9, "target": "Y:Titer", "model_type": "xgboost", "n_timepoints": 15}
+```
+
+**Batch / template workflow** (the OpenAPI schema is single-experiment; this is a
+convenience for the interview's test-template CSV):
+
+```bash
+uv run titer-batch-predict \
+  --data data/datahow_interview_test_data.csv \
+  --model artifacts/xgb_baseline.joblib \
+  --out artifacts/test_predictions.csv        # -> RowID, Exp, Time[day], Y:Titer
+```
+
+**Docker** (the model is mounted at runtime — it is not baked into the image):
+
+```bash
+docker build -t datahow-titer-service .
+docker run --rm -p 8000:8000 \
+  -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
+  -v "$PWD/artifacts:/app/artifacts" datahow-titer-service
+```
+
+**Assumptions & limitations.** A request must provide the full variable set the
+model was trained on (extra variables are ignored, missing ones → 422). The image
+installs the whole ML stack, so it is large — it could be slimmed by splitting the
+notebook/CDE dependencies into extras.
+
 ## Development
 
 ```bash
+uv run pytest            # tests (data integrity + service; service uses a mocked model)
 uv run ruff check .      # lint
 uv run ruff format .     # format
-uv run pytest            # tests (data integrity)
+# or: make test / make lint / make check
 ```
