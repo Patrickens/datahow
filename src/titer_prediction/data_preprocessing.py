@@ -85,13 +85,16 @@ class ExperimentSequence:
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
-def read_inputs(path: str | Path) -> pd.DataFrame:
-    """Load a raw inputs CSV and forward-fill the static (``Z:``) columns.
+def read_inputs(source: str | Path | pd.DataFrame) -> pd.DataFrame:
+    """Load raw inputs and forward-fill the static (``Z:``) columns.
 
-    The design parameters are recorded only on day 0; we fill them across every
-    time step of the experiment so downstream code can treat them uniformly.
+    ``source`` may be a path to a CSV or an already-in-memory DataFrame (used by
+    the inference service, which builds a one-experiment frame from an API
+    payload). The design parameters are recorded only on day 0; we fill them
+    across every time step of the experiment so downstream code can treat them
+    uniformly.
     """
-    df = pd.read_csv(path)
+    df = source.copy() if isinstance(source, pd.DataFrame) else pd.read_csv(source)
     _validate_input_columns(df)
     df = df.sort_values([schema.EXP_COL, schema.TIME_COL]).reset_index(drop=True)
 

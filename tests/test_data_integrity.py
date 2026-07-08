@@ -91,6 +91,14 @@ def test_static_columns_are_forward_filled(tmp_path, synthetic_long):
     assert (df.loc[df["Exp"] == "A", "Z:ExpDuration"] == 3).all()
 
 
+def test_read_inputs_accepts_dataframe(synthetic_long):
+    # The inference service feeds an in-memory frame instead of a CSV path.
+    df = dp.read_inputs(synthetic_long)
+    assert (df.loc[df["Exp"] == "A", "Z:ExpDuration"] == 3).all()
+    # Source frame is not mutated (read_inputs copies).
+    assert synthetic_long["Z:ExpDuration"].isna().sum() == 3
+
+
 def test_features_have_one_row_per_experiment(synthetic_long):
     features = dp.build_features(synthetic_long)
     assert list(features.index) == ["A", "B"]
