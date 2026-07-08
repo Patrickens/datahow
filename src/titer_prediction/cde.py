@@ -330,7 +330,7 @@ def train(
     lr: float = 3e-3,
     val_frac: float = 0.2,
     seed: int = 0,
-) -> tuple[CDEBundle, dict[str, float]]:
+) -> tuple[CDEBundle, dict[str, float], list[dict]]:
     """Train the neural CDE with a validation holdout, then refit on all data."""
     seq = dp.build_sequences(data_path, targets_path)
     standardizer = fit_standardizer(seq)
@@ -359,39 +359,60 @@ def train(
         "static_init_cols": _static_matrix(seq)[1],
     }
 
-    def fit(indices: np.ndarray, key) -> NeuralCDE:
+    def fit(train_indices, key, val_indices=None):
+        """Train a model; return ``(model, history)`` with per-checkpoint metrics."""
         model = NeuralCDE(
             static_np.shape[1], ys_np.shape[2], n_w, hidden_size, width, depth, key=key
         )
         optim = optax.adam(lr)
         opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
-        ys_j = jnp.asarray(ys_np[indices])
-        static_j = jnp.asarray(static_np[indices])
-        y_j = jnp.asarray(y_np[indices])
+        ys_tr = jnp.asarray(ys_np[train_indices])
+        static_tr = jnp.asarray(static_np[train_indices])
+        y_tr = jnp.asarray(y_np[train_indices])
+
+        has_val = val_indices is not None and len(val_indices) > 0
+        if has_val:
+            ys_va = jnp.asarray(ys_np[val_indices])
+            static_va = jnp.asarray(static_np[val_indices])
+            y_va = np.asarray(y_np[val_indices])
+            raw_va = raw_titer[val_indices]
 
         @eqx.filter_jit
         def step(model, opt_state):
             def loss_fn(m):
-                pred = _predict_batch(m, ys_j, static_j)
-                return jnp.mean((pred - y_j) ** 2)
+                pred = _predict_batch(m, ys_tr, static_tr)
+                return jnp.mean((pred - y_tr) ** 2)
 
             loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
             updates, opt_state = optim.update(grads, opt_state, model)
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss
 
+        history: list[dict] = []
+        every = max(1, epochs // 30)
         for epoch in range(epochs):
             model, opt_state, loss = step(model, opt_state)
-            if epoch % max(1, epochs // 6) == 0 or epoch == epochs - 1:
-                logger.info("  epoch %3d/%d  train MSE=%.4f", epoch, epochs, float(loss))
-        return model
+            if epoch % every == 0 or epoch == epochs - 1:
+                record = {"epoch": epoch, "train_mse": float(loss)}
+                if has_val:
+                    val_pred_std = np.asarray(_predict_batch(model, ys_va, static_va))
+                    record["val_mse"] = float(np.mean((val_pred_std - y_va) ** 2))
+                    m = _metrics(raw_va, standardizer.denorm_target(val_pred_std))
+                    record.update(val_rmse=m["rmse"], val_mae=m["mae"], val_r2=m["r2"])
+                history.append(record)
+                logger.info(
+                    "  epoch %3d/%d  train MSE=%.4f%s",
+                    epoch, epochs, float(loss),
+                    f"  val R2={record['val_r2']:.3f}" if has_val else "",
+                )
+        return model, history
 
     key = jax.random.PRNGKey(seed)
     k_val, k_full = jax.random.split(key)
 
-    # 1) Fit on the train split and report honest validation metrics.
+    # 1) Fit on the train split; report honest validation metrics and keep history.
     logger.info("Fitting holdout model (%d train / %d val)...", len(train_idx), n_val)
-    val_model = fit(train_idx, k_val)
+    val_model, history = fit(train_idx, k_val, val_indices=val_idx)
     val_pred_std = np.asarray(
         _predict_batch(val_model, jnp.asarray(ys_np[val_idx]), jnp.asarray(static_np[val_idx]))
     )
@@ -406,7 +427,7 @@ def train(
 
     # 2) Refit on all data for the deployed model.
     logger.info("Refitting on all %d experiments...", n)
-    full_model = fit(np.arange(n), k_full)
+    full_model, _ = fit(np.arange(n), k_full)
 
     bundle = CDEBundle(
         model=full_model,
@@ -415,7 +436,7 @@ def train(
         static_names=seq.static_names,
         config={**config, "val_metrics": val_metrics},
     )
-    return bundle, val_metrics
+    return bundle, val_metrics, history
 
 
 def predict(bundle: CDEBundle, data_path: str | Path) -> pd.Series:
@@ -450,6 +471,14 @@ def save_bundle(bundle: CDEBundle, path: str | Path) -> None:
         pickle.dump(meta, f)
         eqx.tree_serialise_leaves(f, bundle.model)
     logger.info("Saved CDE bundle to %s", path)
+
+
+def save_history(history: list[dict], path: str | Path) -> None:
+    """Write the per-checkpoint training history to a CSV (for diagnostics/plots)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(history).to_csv(path, index=False)
+    logger.info("Saved training history to %s", path)
 
 
 def _skeleton(config: dict) -> NeuralCDE:
@@ -497,6 +526,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--lr", type=float, default=3e-3)
     p_train.add_argument("--val-frac", type=float, default=0.2)
     p_train.add_argument("--seed", type=int, default=0)
+    p_train.add_argument(
+        "--history", default=None, help="CSV path for the training history (default: next to model)."
+    )
 
     p_pred = sub.add_parser("predict", help="Predict titer from a saved CDE.")
     p_pred.add_argument("--data", required=True)
@@ -507,7 +539,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
 
 def _run_train(args: argparse.Namespace) -> int:
-    bundle, _ = train(
+    bundle, _, history = train(
         args.data,
         args.targets,
         hidden_size=args.hidden_size,
@@ -519,6 +551,8 @@ def _run_train(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     save_bundle(bundle, args.model)
+    history_path = args.history or Path(args.model).with_suffix(".history.csv")
+    save_history(history, history_path)
     return 0
 
 

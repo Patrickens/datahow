@@ -614,6 +614,28 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
+    ### Training curves
+
+    Because the CDE is trained by gradient descent (unlike the closed-form baseline), we
+    track **train and validation MSE** (standardised log-titer) and the **validation R²**
+    over epochs. The curves are the honest way to diagnose whether the model is
+    *undertrained* (both still falling), *overfitting* (train keeps dropping while val
+    turns up), or *unstable* (jagged, exploding — usually the learning rate). This plot
+    trains a short run inline.
+    """)
+    return
+
+
+@app.cell
+def _(plotting):
+    fig_curves = plotting.plot_cde_training_curves(epochs=250)
+    fig_curves
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ### Result
 
     On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.52 on a

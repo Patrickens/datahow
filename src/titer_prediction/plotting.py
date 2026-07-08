@@ -372,6 +372,31 @@ def plot_cde_toy_state():
     return fig
 
 
+def plot_cde_training_curves(epochs: int = 250):
+    """Train a short neural CDE and plot its train/validation learning curves."""
+    from . import cde  # lazy: only this illustration pulls in the JAX stack
+
+    _, _, history = cde.train(TRAIN_DATA, TRAIN_TARGETS, epochs=epochs)
+    hist = pd.DataFrame(history)
+
+    fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
+    ax.plot(hist["epoch"], hist["train_mse"], "-o", ms=3, color="#1f77b4", label="train MSE")
+    if "val_mse" in hist:
+        ax.plot(hist["epoch"], hist["val_mse"], "-o", ms=3, color="#d62728", label="val MSE")
+    ax.set(
+        xlabel="epoch",
+        ylabel="MSE (standardised log-titer)",
+        title=f"Neural CDE training curves ({epochs} epochs)",
+    )
+    ax.legend(loc="upper right", fontsize=9)
+    if "val_r2" in hist:
+        ax2 = ax.twinx()
+        ax2.plot(hist["epoch"], hist["val_r2"], "--", lw=1.2, color="#2ca02c", label="val R²")
+        ax2.set_ylabel("validation R² (titer units)")
+        ax2.legend(loc="lower right", fontsize=9)
+    return fig
+
+
 # ---------------------------------------------------------------------------
 # Generate all README figures
 # ---------------------------------------------------------------------------
@@ -395,6 +420,7 @@ def main() -> None:
         "cde_path_parameter.png": plot_path_parameter(),
         "cde_path_geometry.png": plot_path_geometry(),
         "cde_toy_state.png": plot_cde_toy_state(),
+        "cde_training_curves.png": plot_cde_training_curves(),
     }
     for name, fig in figures.items():
         out = FIGURES_DIR / name
