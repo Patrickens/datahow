@@ -1,0 +1,23 @@
+# Keep the build context small and free of secrets/artifacts.
+.git/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Confidential data and generated outputs (model mounted at runtime).
+data/
+artifacts/
+figures/
+*.parquet
+*.joblib
+*.eqx
+*.csv
+
+# Notebook / docs / local files not needed to run the service.
+__marimo__/
+*.html
+*.pdf
+exploration.py
+claude_*.txt

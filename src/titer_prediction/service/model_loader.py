@@ -16,7 +16,7 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from .. import cde, regression, schema
+from .. import schema
 from .errors import ModelLoadError
 
 logger = logging.getLogger(__name__)
@@ -65,13 +65,19 @@ def load_predictor(model_path: str | Path) -> BundlePredictor:
 
     suffix = path.suffix.lower()
     try:
+        # Import the model module lazily so serving the tabular baseline does not
+        # pull in the JAX/diffrax stack (and vice versa).
         if suffix == ".joblib":
+            from .. import regression
+
             bundle = regression.load_bundle(path)
             model_type = "xgboost"
 
             def _predict(df: pd.DataFrame) -> pd.Series:
                 return regression.predict(bundle, df)
         elif suffix == ".eqx":
+            from .. import cde
+
             bundle = cde.load_bundle(path)
             model_type = "cde"
 
