@@ -660,11 +660,12 @@ def _(mo):
     mo.md(r"""
     ### Result
 
-    On ~100 experiments the CDE lands **below** the baseline (holdout R² ≈ 0.52 on a
-    single 20% split — noisy, it shifts by a few points with small changes), exactly as
-    expected — with so little data the flexible black-box vector field cannot be pinned
-    down. Its value is methodological: it shows the path we would scale up in a data-rich
-    setting.
+    On ~100 experiments the CDE's single 20% holdout is **very noisy**: R² has ranged
+    from ~0.48 (default config) to ~0.9 on other seeds/configs (see `titer-cde sweep`).
+    So it is best read as *competitive with, but not clearly beating,* the baseline —
+    exactly as expected, since with so little data the flexible black-box vector field is
+    under-determined. Its value is methodological; a repeated holdout (or the sweep)
+    would give a more stable estimate than any single split.
     """)
     return
 

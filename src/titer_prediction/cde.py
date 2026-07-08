@@ -262,8 +262,12 @@ class NeuralCDE(eqx.Module):
         # z0 is set from the static design AND the initial observation C0 (see
         # __call__), hence in_size = n_static + n_channels.
         self.initial = eqx.nn.MLP(
-            n_static + n_channels, hidden_size, width, depth,
-            activation=jax.nn.softplus, key=k_init,
+            n_static + n_channels,
+            hidden_size,
+            width,
+            depth,
+            activation=jax.nn.softplus,
+            key=k_init,
         )
         self.func = CDEFunc(hidden_size, n_channels, width, depth, key=k_func)
         self.readout = eqx.nn.Linear(hidden_size, 1, key=k_out)
@@ -408,7 +412,9 @@ def train(
                 history.append(record)
                 logger.info(
                     "  epoch %3d/%d  train MSE=%.4f%s",
-                    epoch, epochs, float(loss),
+                    epoch,
+                    epochs,
+                    float(loss),
                     f"  val R2={record['val_r2']:.3f}" if has_val else "",
                 )
         return model, history
@@ -497,9 +503,7 @@ def sweep(
     for i, idx in enumerate(chosen, start=1):
         cfg = dict(zip(keys, all_configs[idx], strict=True))
         logger.info("sweep %d/%d: %s", i, n_pick, cfg)
-        _, val_metrics, history = train(
-            data_path, targets_path, refit_all=False, **cfg
-        )
+        _, val_metrics, history = train(data_path, targets_path, refit_all=False, **cfg)
         rows.append(
             {
                 **cfg,
@@ -591,7 +595,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--val-frac", type=float, default=0.2)
     p_train.add_argument("--seed", type=int, default=0)
     p_train.add_argument(
-        "--history", default=None, help="CSV path for the training history (default: next to model)."
+        "--history",
+        default=None,
+        help="CSV path for the training history (default: next to model).",
     )
 
     p_pred = sub.add_parser("predict", help="Predict titer from a saved CDE.")

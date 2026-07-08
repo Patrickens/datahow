@@ -238,6 +238,39 @@ keeping a plain supervised CDE; explain it clearly; deliver in small commits.
 - Holdout dipped to ≈0.52 (single noisy 20% split) — expected when dropping
   redundant-but-mildly-informative inputs; kept for cleaner, non-duplicative modelling.
 
+## 10. CDE workflow updates (init from C0, metrics, tuning)
+
+**Goal.** Fix the "weird" initialisation and add training diagnostics + tuning.
+Driven by `claude_cde_prompt.txt`; small commit per step.
+
+**Prompt (refined).**
+> 1. Initialise the CDE from `Z` **and the initial dynamic condition**:
+>    `z0 = ζ_θ(Z, C0)` with `C0 = [t0, W(t0), X(t0)]` (`initial_input =
+>    concatenate([static, ys[0]])`; widen the init MLP). 2. Make padding
+>    mathematically flat, repeating the entire last row *including real time*, and
+>    add a padding-invariance smoke test. 3. Track train/val MSE and val
+>    RMSE/MAE/R² over epochs, save the history, and add a marimo training-curves
+>    plot. 4. Add a bounded hyperparameter sweep (≤30 sampled configs over epochs
+>    / lr / hidden / width / depth / seed) writing `artifacts/cde_sweep_results.csv`.
+>    5. Briefly explain init + flat padding in the notebook.
+
+**Key decisions taken.**
+- **Init `z0 = ζ_θ(static, C0)`**: a CDE only sees increments `dC`, so the absolute
+  initial state (initial VCD / substrate levels) was invisible; injecting `C0`
+  fixes it. `static` stays `Z:Stir`,`Z:DO` (no `Z:`/`W:` redundancy). Init MLP
+  in_size = `n_static + n_channels`.
+- Padding was already flat incl. time (`ys[i, length:] = m[-1]`); clarified the
+  comment and added a **padding-invariance** test (extra flat rows → same output).
+- `fit()` now returns `(model, history)` (train/val MSE + val RMSE/MAE/R² at ~30
+  checkpoints); `train` CLI writes a history CSV; `plot_cde_training_curves()` +
+  a notebook cell visualise it.
+- Added `titer-cde sweep` (+ `train(refit_all=False)`); ≤30 sampled configs →
+  `artifacts/cde_sweep_results.csv`; smoke-tested, user-run for the full sweep.
+- Honesty note: the single 20% holdout is **very noisy** — R² ranged ~0.48–0.9
+  across seeds/configs — so the CDE is framed as competitive-not-clearly-better,
+  with the sweep/repeated-holdout as the stable read.
+- Delivered as five small commits (`8b81388` … `45461e5`).
+
 <!--
 Template for subsequent entries:
 

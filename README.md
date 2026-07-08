@@ -96,13 +96,16 @@ hidden state maps to titer. It handles variable length and irregular sampling
 natively (batches are padded by holding the last observation — a flat,
 zero-contribution tail — so no masking is needed).
 
-**What initialises the hidden state.** `Z:` and `W:` overlap heavily — the `W:`
-trajectories are the feed / pH / temperature recipe *unrolled over time*, so most
-of `Z:` is already in the path (and the planned duration is the time channel). We
-therefore initialise `z₀` from only the design scalars with **no `W:` counterpart**:
-**`Z:Stir` and `Z:DO`** (see `STATIC_INIT_COLS` in `cde.py`), avoiding duplication.
-(The XGBoost baseline, by contrast, uses `Z:` and *not* `W:`, so there `Z:` is the
-compact stand-in for the whole control design.)
+**What initialises the hidden state.** `z₀ = ζ_θ(Z, C0)` — the static design **and
+the first observation** `C0 = [t0, W(t0), X(t0)]`. Two reasons: (1) `Z:` and `W:`
+overlap heavily — the `W:` trajectories are the feed / pH / temperature recipe
+*unrolled over time* — so for `Z:` we keep only the scalars with **no `W:`
+counterpart**, `Z:Stir` and `Z:DO` (see `STATIC_INIT_COLS`; the planned duration is
+the time channel). (2) A CDE evolves via control *increments* `dC`, which are
+invariant to a constant offset, so the **absolute** initial state (initial VCD and
+substrate levels — strongly predictive) would never reach the model unless injected
+through `C0`. (The XGBoost baseline, by contrast, uses `Z:` and *not* `W:`, so there
+`Z:` is the compact stand-in for the whole control design.)
 
 **Interpolation as an inductive bias (challenge #2).** How we interpolate between
 daily samples is a modelling assumption, chosen per channel group (see
@@ -193,10 +196,15 @@ targets arrive, but the ordering matches expectations.
 | ----- | ---- | ---- | -- | -------- |
 | Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
 | **XGBoost baseline** | **~309** | **~12%** | **~0.80** | repeated 5-fold CV |
-| Neural CDE | ~710 | ~19% | ~0.52 | 20% holdout, 300 epochs (noisy) |
+| Neural CDE | ~740 | ~19% | ~0.48–0.9 | single 20% holdout (very noisy) |
 
-The XGBoost baseline is the stronger model here, as anticipated for a small
-tabular-friendly dataset; the CDE demonstrates the path-based methodology.
+The XGBoost baseline is the dependable model here, as anticipated for a small
+tabular-friendly dataset. The neural CDE's single 20% holdout is **very noisy** —
+R² ranges from ~0.48 (default config) to ~0.9 across seeds/configs (`titer-cde
+sweep`), so it is best read as competitive with, not clearly beating, the baseline.
+A repeated holdout would give a more stable estimate; the CDE's value here is
+methodological. Use `titer-cde train` (writes a training-history CSV) and
+`titer-cde sweep` to diagnose training and explore hyperparameters.
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
 > criterion** for this challenge; clarity of preprocessing, evaluation,
