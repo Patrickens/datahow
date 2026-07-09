@@ -316,16 +316,16 @@ make figures
 make models FORCE=1
 ```
 
-Serve the model and call it (works the same against Docker below):
+Serve the model and call it:
 
 ```bash
-make run-api            # uvicorn on :8000 (serves artifacts/xgb_best.joblib by default)
+make run-api            # uvicorn on :9000 (serves artifacts/xgb_best.joblib by default)
 make api-health         # GET  /health   -> {"status":"ok","model_loaded":true}
 make api-predict        # POST /predict with scripts/sample_payload.json -> a titer
 
 # Or by hand:
-curl -s localhost:8000/health
-curl -s -X POST localhost:8000/predict \
+curl -s localhost:9000/health
+curl -s -X POST localhost:9000/predict \
     -H 'Content-Type: application/json' --data @scripts/sample_payload.json
 ```
 
@@ -333,7 +333,9 @@ Run it in Docker (the model is mounted, not baked into the image):
 
 ```bash
 make docker-build
-make docker-run         # then the same make api-health / make api-predict / curl calls
+make docker-run         # foreground server on localhost:9000
+make docker-api-health  # from another terminal
+make docker-api-predict # from another terminal
 ```
 
 `MODEL_PATH` selects the artifact — `artifacts/xgb_best.joblib` (default) or

@@ -1019,12 +1019,15 @@ def _(mo):
     model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_best.joblib`).
 
     ```bash
-    make run-api        # serve xgb_best.joblib on :8000 (uvicorn)
+    make run-api        # serve xgb_best.joblib on :9000 (uvicorn)
     make api-health     # GET  /health   -> {"status":"ok","model_loaded":true}
     make api-predict    # POST /predict  (scripts/sample_payload.json) -> a titer
 
-    # in Docker (model mounted, not baked in); the api-* calls work unchanged:
-    make docker-build && make docker-run
+    # in Docker (model mounted, not baked in):
+    make docker-build
+    make docker-run          # foreground server on localhost:9000
+    make docker-api-health   # from another terminal
+    make docker-api-predict  # from another terminal
     ```
 
     **Reproduce everything.** The best models are committed, so the service and this

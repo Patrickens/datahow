@@ -2,20 +2,21 @@
 MODEL_PATH ?= artifacts/xgb_best.joblib
 IMAGE ?= datahow-titer-service
 DOCKER ?= docker.exe
-DOCKER_SHELL ?= cmd.exe /C
+PYTHON ?= uv run python
 PORT ?= 9000
-ARTIFACTS_DIR ?= $(shell command -v cygpath >/dev/null 2>&1 && cygpath -m "$(CURDIR)/artifacts" || printf "%s/artifacts" "$(CURDIR)")
+ARTIFACTS_DIR ?= artifacts
 DATA ?= data/datahow_interview_train_data.csv
 TARGETS ?= data/datahow_interview_train_targets.csv
 TEST_DATA ?= data/datahow_interview_test_data.csv
 
 .PHONY: help test lint format check models figures predict \
-        run-api api-health api-predict docker-check docker-build docker-run
+        run-api api-health api-predict docker-check docker-build docker-run \
+        docker-api-health docker-api-predict
 
 help:
 	@echo "Reproduce:   make models [FORCE=1]   make figures [FORCE=1]   make predict"
 	@echo "Serve:       make run-api   then   make api-health   make api-predict"
-	@echo "Docker:      make docker-build   make docker-run   then the api-* targets"
+	@echo "Docker:      make docker-build   make docker-run   then   make docker-api-health   make docker-api-predict"
 	@echo "Dev:         make test   make lint   make format   make check"
 
 # --- Modelling ---------------------------------------------------------------
@@ -56,18 +57,18 @@ api-predict:
 
 # --- Docker ------------------------------------------------------------------
 docker-check:
-	@if ! $(DOCKER_SHELL) where "$(DOCKER)" >/dev/null 2>&1; then \
-		echo "Docker CLI not found. Install/start Docker Desktop and ensure '$(DOCKER)' is on PATH."; \
-		exit 127; \
-	fi
+	$(PYTHON) scripts/docker_cli.py check --docker "$(DOCKER)"
 
 docker-build: docker-check
-	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" $(DOCKER_SHELL) "$(DOCKER)" build -t $(IMAGE) .
+	$(PYTHON) scripts/docker_cli.py build --docker "$(DOCKER)" --image "$(IMAGE)"
 
 docker-run: docker-check
-	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" $(DOCKER_SHELL) "$(DOCKER)" run --rm -p $(PORT):8000 \
-		-e MODEL_PATH=/app/artifacts/$(notdir $(MODEL_PATH)) \
-		--mount type=bind,source="$(ARTIFACTS_DIR)",target=/app/artifacts $(IMAGE)
+	$(PYTHON) scripts/docker_cli.py run --docker "$(DOCKER)" --image "$(IMAGE)" --port "$(PORT)" \
+		--model-path "$(MODEL_PATH)" --artifacts-dir "$(ARTIFACTS_DIR)"
+
+docker-api-health: api-health
+
+docker-api-predict: api-predict
 
 # --- Dev ---------------------------------------------------------------------
 test:
