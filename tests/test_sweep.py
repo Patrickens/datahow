@@ -40,6 +40,5 @@ def test_sample_xgb_configs_is_deterministic_and_seeded():
         )
     )
     assert all(
-        "max_depth" in cfg and "learning_rate" in cfg and "n_estimators" in cfg
-        for cfg in configs
+        "max_depth" in cfg and "learning_rate" in cfg and "n_estimators" in cfg for cfg in configs
     )
