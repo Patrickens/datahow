@@ -179,51 +179,38 @@ its value is methodological.
 
 ## Exploratory data analysis
 
-A full, narrated walk-through lives in the [`exploration.py`](exploration.py)
-marimo notebook (`uv run marimo edit exploration.py`); figures are regenerated
-with `uv run python -m titer_prediction.plotting`. Highlights:
+The full, narrated walk-through — with every figure — lives in the
+[`exploration.py`](exploration.py) marimo notebook. It is the detailed
+explanation of the whole pipeline; open it with:
 
-**The target** is right-skewed with a long high-titer tail (mean > median) — hence
-the `log1p` transform, and why the sparse high-titer runs are the hardest to
-predict:
+```bash
+uv run marimo run exploration.py     # read-only view (or: marimo edit)
+make figures                         # (re)generate figures/*.png  (FORCE=1 to refresh)
+```
 
-![Titer distribution](figures/titer_distribution.png)
+Figures are derived from the confidential data and are **not committed**; the
+commands above regenerate them locally. Narrative highlights:
 
-**Measured states**, one line per experiment coloured by final titer. Note the
-substrates (glucose, glutamine) *rise*: they are fed faster than consumed, so they
-accumulate while feeding is on and only draw down once it stops. Ammonia rises as a
-metabolic byproduct (it is not fed):
-
-![State trajectories](figures/input_state_timecourses.png)
-
-![State trajectories](figures/input_state_timecourses.png)
-
-A notable domain signal: in the **longer runs, lactate rises and then falls**.
-This is the classic **lactate metabolic shift** — cells switch from net lactate
-*production* (glycolytic overflow) to net *consumption*, typically once glucose
-starts to become limiting. It is a recognised marker of healthy, productive
-fed-batch CHO cultures and tends to coincide with higher final titer, so it is a
-genuinely informative feature rather than noise.
-
-**Control inputs** are step-like — the feeds switch on/off — which is exactly why
-the CDE **step-interpolates** the `W:` controls (while linearly interpolating the
-continuous `X:` states):
-
-![Control trajectories](figures/input_control_timecourses.png)
-
-**Gompertz fits** compress each VCD growth curve into interpretable parameters
-(fit R² ≈ 0.99), which carry real signal against titer:
-
-![Gompertz fits](figures/gompertz_fits.png)
-
-**Baseline diagnostics** — out-of-fold predictions and feature importances. The
-model poorly predicts the high-titer regime, which is unfortunate because these
-are exactly the most interesting experiments from a process-optimization
-perspective. The most important features remain biologically meaningful: the
-**area under the VCD curve** = integral of viable cells, plus substrate/byproduct
-level, AUC, and feed-accounting features:
-
-![Regression CV](figures/regression_cv.png)
+- **The target** is right-skewed with a long high-titer tail (mean > median) —
+  hence the `log1p` transform, and why the sparse high-titer runs are hardest to
+  predict.
+- **Measured states**: the substrates (glucose, glutamine) *rise* because they
+  are fed faster than consumed, accumulating while feeding is on and drawing down
+  only once it stops; ammonia rises as a metabolic byproduct (it is not fed).
+- **Lactate metabolic shift**: in the longer runs lactate rises and then falls —
+  cells switch from net lactate *production* (glycolytic overflow) to net
+  *consumption* once glucose becomes limiting. A recognised marker of healthy,
+  productive fed-batch CHO cultures that tends to coincide with higher titer, so
+  a genuinely informative feature rather than noise.
+- **Control inputs** are step-like (feeds switch on/off) — which is exactly why
+  the CDE **step-interpolates** the `W:` controls while linearly interpolating
+  the continuous `X:` states.
+- **Gompertz fits** compress each VCD growth curve into interpretable parameters
+  (fit R² ≈ 0.99) that carry real signal against titer.
+- **Baseline diagnostics** (out-of-fold predictions + feature importances): the
+  model under-predicts the high-titer regime — unfortunate, as those are the most
+  interesting runs — but the top features stay biologically meaningful (the AUC
+  of viable/total cells, substrate/byproduct levels and AUCs, feed accounting).
 
 Top 15 features by XGBoost gain (from `artifacts/feature_importance.csv`):
 
@@ -255,15 +242,15 @@ targets arrive, but the ordering matches expectations.
 | ----- | ---- | ---- | -- | -------- |
 | Mean predictor | ~734 | ~55% | ~0.00 | repeated 5-fold CV |
 | **XGBoost baseline** | **~286** | **~11.5%** | **~0.83** | 10-config sweep + repeated 5-fold CV |
-| Neural CDE | ~220 | ~13.6% | ~0.85 | 20-config sweep + 20% validation holdout |
+| Neural CDE | ~220 | ~13.6% | ~0.85 | 10-config sweep + 20% validation holdout |
 
 The XGBoost baseline is still the dependable deployment choice here: it is fast,
 stable, and easy to serve. The tuned CDE achieved a strong validation score on
 this split, but that number should be read cautiously because a single 20%
 holdout over ~100 experiments is noisy. The CDE's value here is methodological:
 it demonstrates the path-based treatment of ragged trajectories and
-discontinuous controls. Use `titer-sweep` to reproduce both sweeps and final
-refits.
+discontinuous controls. Run `make models FORCE=1` to reproduce both sweeps and
+final refits (single `seed=0`).
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
 > criterion** for this challenge; clarity of preprocessing, evaluation,
@@ -281,7 +268,7 @@ datahow/
 ├── Dockerfile / Makefile   # inference-service image + dev commands
 ├── exploration.py          # marimo notebook (data -> preprocessing -> models)
 ├── data/                   # provided CSVs — git-ignored (see below)
-├── artifacts/              # generated features / trained models — git-ignored
+├── artifacts/              # best models + metadata + caches committed; sweep scratch git-ignored
 ├── src/titer_prediction/
 │   ├── schema.py               # Z:/W:/X: prefix conventions + column groups
 │   ├── data_preprocessing.py   # load/parse CSVs (+ containers) -> ragged sequences
@@ -305,32 +292,51 @@ datahow/
 Prerequisites: [`uv`](https://docs.astral.sh/uv/) and Python 3.11/3.12.
 
 ```bash
-# Install the environment from the lockfile
-uv sync --extra dev
+uv sync --extra dev          # install the pinned environment
 
 # Place the provided data files (not committed) under data/:
-#   data/datahow_interview_train_data.csv
-#   data/datahow_interview_train_targets.csv
-#   data/datahow_interview_test_data.csv
-#   data/datahow_interview_test_targets-TEMPLATE.csv
-
-# Train the XGBoost baseline (builds the feature matrix internally,
-# reports repeated-CV metrics, and saves the model bundle)
-uv run titer-regression train \
-    --data data/datahow_interview_train_data.csv \
-    --targets data/datahow_interview_train_targets.csv \
-    --model artifacts/xgb_best.joblib
-
-# Train the neural CDE
-uv run titer-cde train \
-    --data data/datahow_interview_train_data.csv \
-    --targets data/datahow_interview_train_targets.csv \
-    --model artifacts/cde.eqx
-
-# Predict on new inputs with either model (same CSV output format)
-uv run titer-regression predict --data data/datahow_interview_test_data.csv \
-    --model artifacts/xgb_best.joblib --out artifacts/test_predictions.csv
+#   datahow_interview_train_data.csv        datahow_interview_train_targets.csv
+#   datahow_interview_test_data.csv         datahow_interview_test_targets-TEMPLATE.csv
 ```
+
+The **best models are committed** under `artifacts/`, so nothing needs training to
+run the service or reproduce the walkthrough. A few `make` commands cover everything:
+
+```bash
+# 1. Predictions on the test inputs -> artifacts/test_predictions.csv
+#    (RowID, Exp, Time[day], Y:Titer). Drop in the real test targets later.
+make predict
+
+# 2. Regenerate the figures the notebook/README describe (FORCE=1 to refresh caches)
+make figures
+
+# 3. Rebuild the best models from scratch (both sweeps; single seed=0).
+#    Normally unnecessary — the models are committed — so this is a no-op unless FORCE=1.
+make models FORCE=1
+```
+
+Serve the model and call it (works the same against Docker below):
+
+```bash
+make run-api            # uvicorn on :8000 (serves artifacts/xgb_best.joblib by default)
+make api-health         # GET  /health   -> {"status":"ok","model_loaded":true}
+make api-predict        # POST /predict with scripts/sample_payload.json -> a titer
+
+# Or by hand:
+curl -s localhost:8000/health
+curl -s -X POST localhost:8000/predict \
+    -H 'Content-Type: application/json' --data @scripts/sample_payload.json
+```
+
+Run it in Docker (the model is mounted, not baked into the image):
+
+```bash
+make docker-build
+make docker-run         # then the same make api-health / make api-predict / curl calls
+```
+
+`MODEL_PATH` selects the artifact — `artifacts/xgb_best.joblib` (default) or
+`artifacts/cde_best.eqx` to serve the neural CDE instead.
 
 ## Data confidentiality
 
@@ -352,22 +358,14 @@ by artifact extension), `predictor.py` (payload → frame → prediction), `conf
 (`MODEL_PATH`), `errors.py` + handlers (invalid payload → 400, no model → 503,
 unexpected → 500, per the OpenAPI spec), `app.py` (endpoints).
 
-**Model selection.** `MODEL_PATH` chooses the artifact: `*.joblib` → XGBoost
-baseline (the **default**, `artifacts/xgb_best.joblib` — fast, no per-request
-ODE solve), `*.eqx` → neural CDE. If the artifact is missing the app still starts;
-`/health` reports `model_loaded: false` and `/predict` returns 503.
+**Model selection.** `MODEL_PATH` chooses the artifact: `*.joblib` → the XGBoost
+model (the **default**, `artifacts/xgb_best.joblib` — fast, no per-request ODE
+solve), `*.eqx` → the neural CDE (`MODEL_PATH=artifacts/cde_best.eqx`). If the
+artifact is missing the app still starts; `/health` reports `model_loaded: false`
+and `/predict` returns 503.
 
-```bash
-# Run locally (default model = XGBoost baseline)
-uv run uvicorn titer_prediction.service.app:app --host 0.0.0.0 --port 8000
-# ...or: make run-api      (serve the CDE: MODEL_PATH=artifacts/cde.eqx make run-api)
-
-curl localhost:8000/health
-# {"status":"ok","model_loaded":true}
-```
-
-`POST /predict` (one experiment; `Z:` scalars are single-element arrays, `W:`/`X:`
-arrays match `timestamps`):
+`POST /predict` takes one experiment — `Z:` scalars as single-element arrays,
+`W:`/`X:` arrays matching `timestamps` (full example in `scripts/sample_payload.json`):
 
 ```jsonc
 {
@@ -382,27 +380,11 @@ arrays match `timestamps`):
 // -> {"prediction": 2138.9, "target": "Y:Titer", "model_type": "xgboost", "n_timepoints": 15}
 ```
 
-**Batch / template workflow** (the OpenAPI schema is single-experiment; this is a
-convenience for the interview's test-template CSV):
-
-```bash
-uv run titer-batch-predict \
-  --data data/datahow_interview_test_data.csv \
-  --model artifacts/xgb_best.joblib \
-  --out artifacts/test_predictions.csv        # -> RowID, Exp, Time[day], Y:Titer
-```
-
-**Docker** (the model is mounted at runtime — it is not baked into the image):
-
-```bash
-docker build -t datahow-titer-service .
-docker run --rm -p 8000:8000 \
-  -e MODEL_PATH=/app/artifacts/xgb_best.joblib \
-  -v "$PWD/artifacts:/app/artifacts" datahow-titer-service
-
-# End-to-end smoke test: builds the image and asserts health/predict/400/503.
-bash scripts/smoke_docker.sh          # or: uv run pytest -m docker
-```
+Running it locally or in Docker, plus the `GET /health` / `POST /predict` calls and
+the batch/test-prediction workflow, are all covered by the `make` targets in
+[Getting started](#getting-started). The committed end-to-end Docker smoke test
+(`bash scripts/smoke_docker.sh`, or `uv run pytest -m docker`) builds the image and
+asserts the full contract (health, predict, 400 on a bad payload, 503 with no model).
 
 **Assumptions & limitations.** A request must provide the full variable set the
 model was trained on (extra variables are ignored, missing ones → 400). The image

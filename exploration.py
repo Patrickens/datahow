@@ -1034,17 +1034,22 @@ def _(mo):
     model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_best.joblib`).
 
     ```bash
-    # serve it
-    uv run uvicorn titer_prediction.service.app:app --port 8000
+    make run-api        # serve xgb_best.joblib on :8000 (uvicorn)
+    make api-health     # GET  /health   -> {"status":"ok","model_loaded":true}
+    make api-predict    # POST /predict  (scripts/sample_payload.json) -> a titer
 
-    # predict (a ready example payload is in scripts/sample_payload.json)
-    curl -s -X POST localhost:8000/predict \
-        -H 'Content-Type: application/json' \
-        --data @scripts/sample_payload.json
-    # -> {"prediction": <titer>, "target": "Y:Titer", "model_type": "xgboost", ...}
+    # in Docker (model mounted, not baked in); the api-* calls work unchanged:
+    make docker-build && make docker-run
     ```
 
-    Batch prediction and Docker are covered in the README.
+    **Reproduce everything.** The best models are committed, so the service and this
+    notebook work without training. To rebuild from scratch:
+
+    ```bash
+    make predict            # test-set predictions -> artifacts/test_predictions.csv
+    make figures            # regenerate the figures above (FORCE=1 to refresh caches)
+    make models FORCE=1     # re-run both sweeps (single seed=0) and refit the best models
+    ```
     """)
     return
 
