@@ -484,33 +484,74 @@ def plot_cde_training_curves(epochs: int | None = None, regenerate: bool = False
 
 
 # ---------------------------------------------------------------------------
-# Generate all README figures
+# Generate all README / notebook figures
 # ---------------------------------------------------------------------------
-def main() -> None:
+FIGURE_NAMES = (
+    "titer_distribution.png",
+    "input_state_timecourses.png",
+    "input_control_timecourses.png",
+    "gompertz_fits.png",
+    "regression_cv.png",
+    "cde_interpolation.png",
+    "cde_path_parameter.png",
+    "cde_toy_state.png",
+    "cde_training_curves.png",
+)
+
+
+def main(force: bool = False) -> None:
+    """(Re)generate all figures. Skips figures that already exist unless ``force``.
+
+    With ``force``, the cached tables (feature importances, CDE training history)
+    are regenerated too, so the figures reflect the current best models.
+    """
     import matplotlib
 
     matplotlib.use("Agg")
     FIGURES_DIR.mkdir(exist_ok=True)
+
+    needed = [n for n in FIGURE_NAMES if force or not (FIGURES_DIR / n).exists()]
+    if not needed:
+        print("all figures present (pass --force to regenerate)")
+        return
+
+    if force:
+        feature_importance_table(regenerate=True)
+        cde_training_history(regenerate=True)
+
     df, targets = load_train()
     X, yt = baseline_matrix()  # built once, reused for the regression figures
-
-    figures = {
-        "titer_distribution.png": plot_titer_distribution(targets),
-        "input_state_timecourses.png": plot_state_timecourses(df, targets),
-        "input_control_timecourses.png": plot_control_timecourses(df, targets),
-        "gompertz_fits.png": plot_gompertz_examples(df, targets),
-        "regression_cv.png": plot_cv_predictions(X, yt),
-        "cde_interpolation.png": plot_interpolation_comparison(),
-        "cde_path_parameter.png": plot_path_parameter(),
-        "cde_toy_state.png": plot_cde_toy_state(),
-        "cde_training_curves.png": plot_cde_training_curves(),
+    builders = {
+        "titer_distribution.png": lambda: plot_titer_distribution(targets),
+        "input_state_timecourses.png": lambda: plot_state_timecourses(df, targets),
+        "input_control_timecourses.png": lambda: plot_control_timecourses(df, targets),
+        "gompertz_fits.png": lambda: plot_gompertz_examples(df, targets),
+        "regression_cv.png": lambda: plot_cv_predictions(X, yt),
+        "cde_interpolation.png": plot_interpolation_comparison,
+        "cde_path_parameter.png": plot_path_parameter,
+        "cde_toy_state.png": plot_cde_toy_state,
+        "cde_training_curves.png": plot_cde_training_curves,
     }
-    for name, fig in figures.items():
+    for name in needed:
+        fig = builders[name]()
         out = FIGURES_DIR / name
         fig.savefig(out, dpi=110, bbox_inches="tight")
         plt.close(fig)
         print(f"wrote {out.relative_to(REPO_ROOT)}")
 
 
+def _cli(argv: list[str] | None = None) -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Regenerate the README / notebook figures.")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Regenerate the cached tables and overwrite existing figures.",
+    )
+    main(force=parser.parse_args(argv).force)
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(_cli())
