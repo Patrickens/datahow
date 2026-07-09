@@ -1,12 +1,14 @@
 # Developer + reproduction commands. Requires `uv` (and Docker for the docker-* targets).
 MODEL_PATH ?= artifacts/xgb_best.joblib
 IMAGE ?= datahow-titer-service
+DOCKER ?= docker.exe
+PORT ?= 9000
 DATA ?= data/datahow_interview_train_data.csv
 TARGETS ?= data/datahow_interview_train_targets.csv
 TEST_DATA ?= data/datahow_interview_test_data.csv
 
 .PHONY: help test lint format check models figures predict \
-        run-api api-health api-predict docker-build docker-run
+        run-api api-health api-predict docker-check docker-build docker-run
 
 help:
 	@echo "Reproduce:   make models [FORCE=1]   make figures [FORCE=1]   make predict"
@@ -39,23 +41,29 @@ predict:
 
 # --- Service -----------------------------------------------------------------
 run-api:
-	uv run uvicorn titer_prediction.service.app:app --host 0.0.0.0 --port 8000 --reload
+	uv run uvicorn titer_prediction.service.app:app --host 0.0.0.0 --port $(PORT) --reload
 
 # GET /health and POST /predict — work against `run-api` or `docker-run`.
 api-health:
-	curl -s localhost:8000/health; echo
+	curl -s localhost:$(PORT)/health; echo
 
 api-predict:
-	curl -s -X POST localhost:8000/predict \
+	curl -s -X POST localhost:$(PORT)/predict \
 		-H 'Content-Type: application/json' \
 		--data @scripts/sample_payload.json; echo
 
 # --- Docker ------------------------------------------------------------------
-docker-build:
-	docker build -t $(IMAGE) .
+docker-check:
+	@if ! command -v "$(DOCKER)" >/dev/null 2>&1; then \
+		echo "Docker CLI not found. Install/start Docker Desktop and ensure '$(DOCKER)' is on PATH."; \
+		exit 127; \
+	fi
 
-docker-run:
-	docker run --rm -p 8000:8000 \
+docker-build: docker-check
+	"$(DOCKER)" build -t $(IMAGE) .
+
+docker-run: docker-check
+	"$(DOCKER)" run --rm -p $(PORT):8000 \
 		-e MODEL_PATH=/app/artifacts/$(notdir $(MODEL_PATH)) \
 		-v "$(CURDIR)/artifacts:/app/artifacts" $(IMAGE)
 
