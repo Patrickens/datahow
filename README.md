@@ -284,7 +284,7 @@ datahow/
 ├── artifacts/              # generated features / trained models — git-ignored
 ├── src/titer_prediction/
 │   ├── schema.py               # Z:/W:/X: prefix conventions + column groups
-│   ├── data_preprocessing.py   # raw CSV/frame -> tabular features + ragged sequences
+│   ├── data_preprocessing.py   # load/parse CSVs (+ containers) -> ragged sequences
 │   ├── features.py             # baseline features: Gompertz + TSFEL + static
 │   ├── regression.py           # XGBoost baseline, CV, CLI
 │   ├── cde.py                  # neural CDE via diffrax, CLI
@@ -294,8 +294,10 @@ datahow/
 │       ├── app.py  config.py  dto.py  errors.py
 │       ├── model_loader.py  predictor.py  batch_predict.py
 └── tests/
-    ├── test_data_integrity.py  # data-integrity + preprocessing/model tests
-    └── test_service.py         # inference-service tests (mocked model)
+    ├── test_data_integrity.py       # data-integrity + preprocessing/model tests
+    ├── test_service.py              # inference-service tests (mocked model)
+    ├── test_service_integration.py  # real-model load + /predict + batch (skips w/o artifact)
+    └── test_docker_smoke.py         # builds + runs the image (skips w/o Docker daemon)
 ```
 
 ## Getting started
@@ -312,13 +314,8 @@ uv sync --extra dev
 #   data/datahow_interview_test_data.csv
 #   data/datahow_interview_test_targets-TEMPLATE.csv
 
-# Build the feature table from the raw CSVs
-uv run titer-preprocess \
-    --data data/datahow_interview_train_data.csv \
-    --targets data/datahow_interview_train_targets.csv \
-    --out artifacts/train_features.parquet
-
-# Train the XGBoost baseline (repeated-CV report + saved model bundle)
+# Train the XGBoost baseline (builds the feature matrix internally,
+# reports repeated-CV metrics, and saves the model bundle)
 uv run titer-regression train \
     --data data/datahow_interview_train_data.csv \
     --targets data/datahow_interview_train_targets.csv \
@@ -352,7 +349,8 @@ and runs it through the **same `read_inputs` preprocessing as training** — the
 never re-implements model logic. Layers: `dto.py` (typed, validated requests),
 `model_loader.py` (loads a bundle once at startup; **model-agnostic**, dispatching
 by artifact extension), `predictor.py` (payload → frame → prediction), `config.py`
-(`MODEL_PATH`), `errors.py` + handlers (→ 422 / 503 / 500), `app.py` (endpoints).
+(`MODEL_PATH`), `errors.py` + handlers (invalid payload → 400, no model → 503,
+unexpected → 500, per the OpenAPI spec), `app.py` (endpoints).
 
 **Model selection.** `MODEL_PATH` chooses the artifact: `*.joblib` → XGBoost
 baseline (the **default**, `artifacts/xgb_baseline.joblib` — fast, no per-request
@@ -401,10 +399,13 @@ docker build -t datahow-titer-service .
 docker run --rm -p 8000:8000 \
   -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
   -v "$PWD/artifacts:/app/artifacts" datahow-titer-service
+
+# End-to-end smoke test: builds the image and asserts health/predict/400/503.
+bash scripts/smoke_docker.sh          # or: uv run pytest -m docker
 ```
 
 **Assumptions & limitations.** A request must provide the full variable set the
-model was trained on (extra variables are ignored, missing ones → 422). The image
+model was trained on (extra variables are ignored, missing ones → 400). The image
 installs the whole ML stack, so it is large — it could be slimmed by splitting the
 notebook/CDE dependencies into extras.
 

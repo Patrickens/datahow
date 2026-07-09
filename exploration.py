@@ -488,6 +488,27 @@ def _(plotting):
 @app.cell
 def _(mo):
     mo.md(r"""
+    **How XGBoost scores importance (gain).** These numbers are the **gain**
+    importance. Recall the split *gain* from the math above — the loss reduction a
+    split buys, $\tfrac12\big[\tfrac{G_L^2}{H_L+\lambda}+\tfrac{G_R^2}{H_R+\lambda}
+    -\tfrac{(G_L+G_R)^2}{H_L+H_R+\lambda}\big]-\gamma$. A feature's gain importance
+    sums that reduction over **every split that uses it**, across all trees; we then
+    normalise so the values sum to 1. So it answers *"how much did this feature reduce
+    the loss when the model chose to split on it?"* — not merely how often it was used
+    (`weight`) or how many samples its splits touched (`cover`).
+
+    Two caveats to read it honestly: gain is biased toward **high-cardinality /
+    continuous** features (they offer more candidate split points), and among
+    **correlated** features the credit is split somewhat arbitrarily between them. So
+    treat the ranking as a guide corroborated by domain sense — which is exactly why
+    the biologically meaningful ordering above is reassuring rather than surprising.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
     ## 5. Beyond the baseline — the neural CDE
 
     The baseline is strong precisely because this is a small, tabular-friendly
@@ -884,6 +905,65 @@ def _(mo):
       models** are the interpretable, data-efficient destination.
     - Performance was never the point of this challenge — clarity of the pipeline and of
       the decisions was.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 6. Using the inference service
+
+    The trained baseline is served behind a small **FastAPI** app
+    (`titer_prediction.service`) with two endpoints from the provided OpenAPI spec:
+    `GET /health` (liveness + whether a model is loaded) and `POST /predict` (one
+    experiment → predicted final titer). The model is loaded once at startup from
+    `MODEL_PATH` (default `artifacts/xgb_baseline.joblib`; point it at a `.eqx` bundle
+    to serve the neural CDE instead). Invalid payloads return **400**, and if no model
+    is loaded `/predict` returns **503** while `/health` still reports `model_loaded:false`.
+
+    **Run locally**
+
+    ```bash
+    # serve the baseline (uses MODEL_PATH, default artifacts/xgb_baseline.joblib)
+    uv run uvicorn titer_prediction.service.app:app --port 8000
+    ```
+
+    **Call it** — the request carries `timestamps` and a `values` map keyed by the
+    `Z:`/`W:`/`X:` convention (a ready example lives in `scripts/sample_payload.json`):
+
+    ```bash
+    curl -s localhost:8000/health
+    # {"status":"ok","model_loaded":true}
+
+    curl -s -X POST localhost:8000/predict \
+        -H 'Content-Type: application/json' \
+        --data @scripts/sample_payload.json
+    # {"prediction": <titer>, "target":"Y:Titer", "model_type":"xgboost", "n_timepoints":15, ...}
+    ```
+
+    **Batch a whole CSV** into the target-template shape (`RowID, Exp, Time[day],
+    Y:Titer`) — this reuses the exact `/predict` conversion path:
+
+    ```bash
+    uv run python -m titer_prediction.service.batch_predict \
+        --data data/datahow_interview_test_data.csv \
+        --model artifacts/xgb_baseline.joblib \
+        --out artifacts/test_predictions.csv
+    ```
+
+    **Docker** — the image doesn't bake in the (git-ignored) model, so mount the
+    artifacts at runtime:
+
+    ```bash
+    docker build -t datahow-titer-service .
+    docker run --rm -p 8000:8000 \
+        -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
+        -v "$PWD/artifacts:/app/artifacts:ro" datahow-titer-service
+    ```
+
+    `scripts/smoke_docker.sh` builds the image and asserts this whole contract
+    end-to-end (health, predict, 400 on a bad payload, 503 with no model).
     """)
     return
 

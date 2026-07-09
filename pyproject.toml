@@ -33,7 +33,6 @@ dev = [
 
 [project.scripts]
 # Convenience entry points; each module also runs via `python -m ...`.
-titer-preprocess = "titer_prediction.data_preprocessing:main"
 titer-regression = "titer_prediction.regression:main"
 titer-cde = "titer_prediction.cde:main"
 titer-sweep = "titer_prediction.sweep:main"
@@ -63,3 +62,6 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+    "docker: end-to-end tests that build and run the Docker image (need a running daemon)",
+]
