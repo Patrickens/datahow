@@ -229,25 +229,6 @@ def _(df, plotting, targets):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### Gompertz parameters as signal
-
-    The parameters are useful but not the whole story: larger growth amplitude and
-    later inflection tend to align with higher titer, while substrate/byproduct
-    dynamics carry additional information that a single sigmoid cannot express.
-    """)
-    return
-
-
-@app.cell
-def _(df, plotting, targets):
-    fig_signal = plotting.plot_gompertz_signal(df, targets)
-    fig_signal
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
     ### Choosing an automated feature library — and landing on TSFEL
 
     How to turn each channel into features automatically? We iterated:
@@ -351,9 +332,18 @@ def _(mo):
     For a fixed tree structure the optimal weight of leaf $j$ (with instance set $I_j$)
     and the **gain** used to score a candidate split are
 
-    $$ w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}, \qquad
-       \text{gain} = \tfrac{1}{2}\!\left[ \frac{G_L^2}{H_L+\lambda} + \frac{G_R^2}{H_R+\lambda}
-       - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda} \right] - \gamma . $$
+    $$
+    \begin{aligned}
+    w_j^{*}
+      &= -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}, \\
+    \mathrm{gain}
+      &= \frac{1}{2}\left[
+        \frac{G_L^2}{H_L+\lambda}
+        + \frac{G_R^2}{H_R+\lambda}
+        - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}
+      \right] - \gamma .
+    \end{aligned}
+    $$
 
     Trees are grown greedily by maximising that gain. With our **squared-error** loss on
     $u=\log(1+y)$ the statistics are simply $g_i = \hat{u}_i - u_i$ and $h_i = 1$.
@@ -369,13 +359,86 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    mo.md(r"""
-    ### Out-of-fold predictions
+    import csv as _csv
+    import json as _json
+    from pathlib import Path as _Path
 
-    Predicted-vs-actual (left) hugs the diagonal for most runs — CV **R² ≈ 0.80**,
-    far above the mean predictor (~0). The model poorly predicts the high-titer
-    regime, which is unfortunate because these are exactly the most interesting
-    experiments from a process-optimization perspective.
+    _sweep_path = _Path("artifacts/xgb_sweep_results.csv")
+    _metadata_path = _Path("artifacts/xgb_best_metadata.json")
+
+    _sweep_rows = list(_csv.DictReader(_sweep_path.open()))
+    _metadata = _json.loads(_metadata_path.read_text())
+    _best = _metadata["best_validation"]
+    _final_cv = _metadata["final_cv"]["xgboost"]
+    _baseline = _metadata["final_cv"]["baseline_mean"]
+    _cfg = _metadata["best_config"]
+
+    _top_rows = sorted(_sweep_rows, key=lambda row: float(row["xgb_r2"]), reverse=True)[:3]
+    _table = "\n".join(
+        [
+            "| Rank | Run | depth | eta | trees | subsample | colsample | lambda | min child | RMSE | MAPE | R² |",
+            "| ---- | --- | ----- | --- | ----- | --------- | --------- | ------ | --------- | ---- | ---- | -- |",
+            *[
+                "| "
+                + " | ".join(
+                    [
+                        str(rank),
+                        str(int(float(row["run_index"]))),
+                        str(int(float(row["max_depth"]))),
+                        f"{float(row['learning_rate']):.2f}",
+                        str(int(float(row["n_estimators"]))),
+                        f"{float(row['subsample']):.1f}",
+                        f"{float(row['colsample_bytree']):.1f}",
+                        f"{float(row['reg_lambda']):.1f}",
+                        str(int(float(row["min_child_weight"]))),
+                        f"{float(row['xgb_rmse']):.0f}",
+                        f"{100 * float(row['xgb_mape']):.1f}%",
+                        f"{float(row['xgb_r2']):.3f}",
+                    ]
+                )
+                + " |"
+                for rank, row in enumerate(_top_rows, start=1)
+            ],
+        ]
+    )
+
+    mo.md(
+        f"""
+        ### Small XGBoost sweep
+
+        I sampled **{_metadata["n_configs"]}** shallow-tree configurations with fixed
+        seeds (`sweep={_metadata["seeds"]["sweep_seed"]}`,
+        `cv={_metadata["seeds"]["cv_seed"]}`). Each row was evaluated with repeated
+        K-fold CV against the same mean-predictor baseline, then the best configuration
+        was refit on all training experiments with `random_state={_metadata["seeds"]["refit_seed"]}`.
+
+        {_table}
+
+        The selected configuration was run **{int(_best["run_index"])}**:
+        `max_depth={_cfg["max_depth"]}`, `learning_rate={_cfg["learning_rate"]}`,
+        `n_estimators={_cfg["n_estimators"]}`, `subsample={_cfg["subsample"]}`,
+        `colsample_bytree={_cfg["colsample_bytree"]}`, `reg_lambda={_cfg["reg_lambda"]}`,
+        `min_child_weight={_cfg["min_child_weight"]}`.
+
+        After the final refit/evaluation pass, XGBoost reached **RMSE ≈
+        {_final_cv["rmse"]:.0f}**, **MAPE ≈ {100 * _final_cv["mape"]:.1f}%**, and
+        **R² ≈ {_final_cv["r2"]:.2f}**, versus the mean baseline at **RMSE ≈
+        {_baseline["rmse"]:.0f}** and **R² ≈ {_baseline["r2"]:.2f}**.
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### Best XGBoost: out-of-fold predictions
+
+    Predicted-vs-actual (left) hugs the diagonal for most runs — the selected
+    sweep configuration reaches repeated-CV **R² ≈ 0.83**, far above the mean
+    predictor (~0). The model poorly predicts the high-titer regime, which is
+    unfortunate because these are exactly the most interesting experiments from a
+    process-optimization perspective.
 
     Two compounding causes: (i)
     a small-data effect — very few examples exist in the high-titer regime for the
@@ -686,28 +749,97 @@ def _(plotting):
 
 @app.cell
 def _(mo):
-    mo.md(r"""
-    ### Result
+    import csv as _csv
+    import json as _json
+    from pathlib import Path as _Path
 
-    The 20-configuration sweep selected a CDE with validation RMSE ≈ 220, MAPE ≈
-    13.6%, and R² ≈ 0.85 on the fixed 20% holdout. That is encouraging, but the
-    single holdout is still noisy on ~100 experiments. I therefore keep the main
-    conclusion pragmatic: XGBoost is the dependable deployment baseline, while the
-    CDE demonstrates the path-based methodology for ragged, controlled trajectories.
-    """)
+    _sweep_path = _Path("artifacts/cde_sweep_results.csv")
+    _metadata_path = _Path("artifacts/cde_best_metadata.json")
+
+    _sweep_rows = list(_csv.DictReader(_sweep_path.open()))
+    _metadata = _json.loads(_metadata_path.read_text())
+    _best = _metadata["best_validation"]
+    _cfg = _metadata["best_config"]
+
+    _top_rows = sorted(_sweep_rows, key=lambda row: float(row["val_r2"]), reverse=True)[:3]
+    _table = "\n".join(
+        [
+            "| Rank | Run | epochs | lr | hidden | width | depth | RMSE | MAPE | R² |",
+            "| ---- | --- | ------ | -- | ------ | ----- | ----- | ---- | ---- | -- |",
+            *[
+                "| "
+                + " | ".join(
+                    [
+                        str(rank),
+                        str(int(float(row["run_index"]))),
+                        str(int(float(row["epochs"]))),
+                        f"{float(row['lr']):.3g}",
+                        str(int(float(row["hidden_size"]))),
+                        str(int(float(row["width"]))),
+                        str(int(float(row["depth"]))),
+                        f"{float(row['val_rmse']):.0f}",
+                        f"{100 * float(row['val_mape']):.1f}%",
+                        f"{float(row['val_r2']):.3f}",
+                    ]
+                )
+                + " |"
+                for rank, row in enumerate(_top_rows, start=1)
+            ],
+        ]
+    )
+
+    mo.md(
+        f"""
+        ### Small CDE sweep
+
+        I sampled **{_metadata["n_configs"]}** CDE configurations with fixed seeds
+        (`sweep={_metadata["seeds"]["sweep_seed"]}`,
+        `split={_metadata["seeds"]["split_seed"]}`,
+        `refit={_metadata["seeds"]["refit_seed"]}`). Each run used an explicit
+        model-initialisation seed and the same fixed 20% validation holdout.
+
+        {_table}
+
+        The selected configuration was run **{int(_best["run_index"])}**:
+        `epochs={_cfg["epochs"]}`, `lr={_cfg["lr"]}`, `hidden_size={_cfg["hidden_size"]}`,
+        `width={_cfg["width"]}`, `depth={_cfg["depth"]}`,
+        `model_seed={_cfg["model_seed"]}`.
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    import json as _json
+    from pathlib import Path as _Path
+
+    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
+    _best = _metadata["best_validation"]
+
+    mo.md(
+        f"""
+        ### Best CDE: result
+
+        The selected CDE reached **validation RMSE ≈ {_best["val_rmse"]:.0f}**,
+        **MAPE ≈ {100 * _best["val_mape"]:.1f}%**, and **R² ≈ {_best["val_r2"]:.2f}**
+        on the fixed 20% holdout. That is encouraging, but the single holdout is still
+        noisy on ~100 experiments. I therefore keep the main conclusion pragmatic:
+        XGBoost is the dependable deployment baseline, while the CDE demonstrates the
+        path-based methodology for ragged, controlled trajectories.
+        """
+    )
     return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### A more interpretable alternative — hybrid models (what DataHow does)
+    ### Hybrid/mechanistic alternative
 
-    The neural CDE learns its vector field $f_\theta$ as a **black box**. The natural
-    next step is to replace that neural approximation with an **explicit, mechanistic**
-    structure and keep only a few parameters learnable — a **hybrid model**. Instead of
-    $\mathrm{d}h = f_\theta(h)\,\mathrm{d}C$ we would write the mass-balance ODEs of the
-    bioprocess directly, e.g.
+    A more interpretable production direction would replace the black-box CDE vector
+    field with bioprocess mass balances, keeping only selected rates or residual terms
+    learnable. A minimal skeleton might be
 
     $$
     \begin{aligned}
@@ -717,50 +849,15 @@ def _(mo):
     \end{aligned}
     $$
 
-    with $V$ = viable cell density, $G$ = glucose, $P$ = product (titer). Here the
-    **interpretable parameters** are the specific growth/death rates $\mu,\mu_d$, the
-    substrate-uptake rate $q_{\mathrm{glc}}$ (a yield), and the specific productivity
-    $q_p$. The **hybrid** twist: keep this mechanistic skeleton but let small neural
-    networks express how a few of those rates depend on state and conditions (e.g. a
-    Monod term $\mu = \mu_{\max}\,\tfrac{G}{K_G + G}\cdots$ with a learned residual).
+    with $V$ = viable cell density, $G$ = glucose, and $P$ = product. The parameters
+    now have process meaning: growth/death rates, glucose uptake, and specific
+    productivity. A hybrid model can keep this structure and learn only how selected
+    rates depend on state and conditions.
 
-    Why this is the destination:
-
-    - **Data efficiency & priors** — yields and $q_p$ have known physical ranges, so we
-      can impose informative priors and identify the model from few runs.
-    - **Interpretability** — every parameter means something to a process scientist; the
-      model can be inspected, challenged, and trusted.
-    - **Extrapolation** — mechanistic structure generalises beyond the training range,
-      directly attacking the high-titer weakness we saw in the baseline.
-
-    This mechanistic ↔ black-box spectrum — mechanistic ODEs at one end, our neural CDE
-    further along, feature-based ML at the other — is exactly the **hybrid modelling**
-    DataHow specialises in. It is out of scope for this challenge and data budget, but it
-    is where a production solution would head.
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
-    ### A mechanistic ODE alternative
-
-    Even without the ML twist, a **purely mechanistic ODE** — the mass balances above,
-    integrated with **event handling** for the discrete feeds and setpoint switches —
-    would be a scientifically interesting alternative, and the natural home for the
-    interpretable parameters. We do not build it here because:
-
-    - it requires committing to explicit rate laws for *every* state (growth, uptake,
-      byproduct formation, death, product formation);
-    - identifying those parameters reliably from ~100 short trajectories is nontrivial;
-    - the discontinuous feeds/switches need careful **event handling** (or discontinuous
-      controls) in the solver;
-    - together these add substantial implementation and explanation complexity.
-
-    For a take-home, the neural CDE is a cleaner path-based model for ragged, externally
-    controlled trajectories — while being honest that it is a **sequence model, not a
-    mechanistic simulator**.
+    I do not build this here because it needs explicit rate laws, identifiable
+    parameters, and event handling for feed/setpoint switches. For a take-home, the CDE
+    is the cleaner path-based model; mechanistic or hybrid ODEs are the more
+    interpretable production direction.
     """)
     return
 
@@ -771,7 +868,7 @@ def _(mo):
     ### Takeaways
 
     - Clean, interpretable feature engineering plus a well-regularised,
-      honestly-benchmarked baseline reaches **R² ≈ 0.80**.
+      honestly-benchmarked baseline reaches **R² ≈ 0.83**.
     - The neural CDE demonstrates the path-based methodology; **hybrid mechanistic
       models** are the interpretable, data-efficient destination.
     - Performance was never the point of this challenge — clarity of the pipeline and of
