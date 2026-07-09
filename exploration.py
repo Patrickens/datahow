@@ -332,9 +332,9 @@ def _(mo):
     w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda},
     \qquad
     \text{gain} = \tfrac{1}{2}\left[
-        \frac{G_L^2}{H_L + \lambda}
-        + \frac{G_R^2}{H_R + \lambda}
-        - \frac{(G_L + G_R)^2}{H_L + H_R + \lambda}
+    \frac{G_L^2}{H_L + \lambda}
+    + \frac{G_R^2}{H_R + \lambda}
+    - \frac{(G_L + G_R)^2}{H_L + H_R + \lambda}
     \right] - \gamma,
     $$
 
