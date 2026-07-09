@@ -319,7 +319,7 @@ uv sync --extra dev
 uv run titer-regression train \
     --data data/datahow_interview_train_data.csv \
     --targets data/datahow_interview_train_targets.csv \
-    --model artifacts/xgb_baseline.joblib
+    --model artifacts/xgb_best.joblib
 
 # Train the neural CDE
 uv run titer-cde train \
@@ -329,7 +329,7 @@ uv run titer-cde train \
 
 # Predict on new inputs with either model (same CSV output format)
 uv run titer-regression predict --data data/datahow_interview_test_data.csv \
-    --model artifacts/xgb_baseline.joblib --out artifacts/test_predictions.csv
+    --model artifacts/xgb_best.joblib --out artifacts/test_predictions.csv
 ```
 
 ## Data confidentiality
@@ -353,7 +353,7 @@ by artifact extension), `predictor.py` (payload → frame → prediction), `conf
 unexpected → 500, per the OpenAPI spec), `app.py` (endpoints).
 
 **Model selection.** `MODEL_PATH` chooses the artifact: `*.joblib` → XGBoost
-baseline (the **default**, `artifacts/xgb_baseline.joblib` — fast, no per-request
+baseline (the **default**, `artifacts/xgb_best.joblib` — fast, no per-request
 ODE solve), `*.eqx` → neural CDE. If the artifact is missing the app still starts;
 `/health` reports `model_loaded: false` and `/predict` returns 503.
 
@@ -388,7 +388,7 @@ convenience for the interview's test-template CSV):
 ```bash
 uv run titer-batch-predict \
   --data data/datahow_interview_test_data.csv \
-  --model artifacts/xgb_baseline.joblib \
+  --model artifacts/xgb_best.joblib \
   --out artifacts/test_predictions.csv        # -> RowID, Exp, Time[day], Y:Titer
 ```
 
@@ -397,7 +397,7 @@ uv run titer-batch-predict \
 ```bash
 docker build -t datahow-titer-service .
 docker run --rm -p 8000:8000 \
-  -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
+  -e MODEL_PATH=/app/artifacts/xgb_best.joblib \
   -v "$PWD/artifacts:/app/artifacts" datahow-titer-service
 
 # End-to-end smoke test: builds the image and asserts health/predict/400/503.

@@ -8,7 +8,7 @@ API conversion path). Output columns match the template:
 
     python -m titer_prediction.service.batch_predict \
         --data data/datahow_interview_test_data.csv \
-        --model artifacts/xgb_baseline.joblib \
+        --model artifacts/xgb_best.joblib \
         --out artifacts/test_predictions.csv
 """
 

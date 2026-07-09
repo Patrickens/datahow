@@ -4,9 +4,12 @@
 data/
 
 # --- Model artifacts / generated outputs -------------------------------------
-artifacts/
-# Figures are regenerated from the (confidential) data via
-#   uv run python -m titer_prediction.plotting
+# Ignore everything under artifacts/ (sweep scratch, parquet, predictions) EXCEPT
+# the committed "best" models + metadata + notebook caches negated at the bottom
+# of this file, so `make models`/`make figures` outputs don't need re-running.
+artifacts/*
+# Figures + notebook HTML are regenerated from the (confidential) data via
+#   make figures   /   uv run marimo run exploration.py
 figures/
 *.parquet
 *.npz
@@ -43,3 +46,13 @@ Thumbs.db
 
 # Local prompt scratch files (curated record lives in PROMPTS.md)
 claude_*.txt
+
+# --- Committed "best" artifacts (must come last to override the globs above) --
+# Deployable models + their metadata + the notebook's caches are version-
+# controlled so the service and the walkthrough work without retraining.
+!artifacts/xgb_best.joblib
+!artifacts/cde_best.eqx
+!artifacts/xgb_best_metadata.json
+!artifacts/cde_best_metadata.json
+!artifacts/feature_importance.csv
+!artifacts/cde_training_history.csv

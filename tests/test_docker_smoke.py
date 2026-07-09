@@ -29,7 +29,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 IMAGE = "datahow-titer-service"
-MODEL = REPO / "artifacts" / "xgb_baseline.joblib"
+MODEL = REPO / "artifacts" / "xgb_best.joblib"
 PAYLOAD = REPO / "scripts" / "sample_payload.json"
 
 
@@ -45,7 +45,7 @@ def _docker_available() -> bool:
 pytestmark = [
     pytest.mark.docker,
     pytest.mark.skipif(not _docker_available(), reason="Docker daemon not available"),
-    pytest.mark.skipif(not MODEL.exists(), reason="xgb_baseline.joblib not present"),
+    pytest.mark.skipif(not MODEL.exists(), reason="xgb_best.joblib not present"),
 ]
 
 
@@ -91,7 +91,7 @@ def _run_container(name: str, port: int, *extra: str) -> None:
     _run("docker", "rm", "-f", name, timeout=60)
     result = _run(
         "docker", "run", "-d", "--name", name, "-p", f"{port}:8000",
-        "-e", "MODEL_PATH=/app/artifacts/xgb_baseline.joblib", *extra, IMAGE,
+        "-e", "MODEL_PATH=/app/artifacts/xgb_best.joblib", *extra, IMAGE,
         timeout=120,
     )
     assert result.returncode == 0, f"docker run failed: {result.stderr}"

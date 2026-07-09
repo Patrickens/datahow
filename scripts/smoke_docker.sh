@@ -66,7 +66,7 @@ docker build -t "$IMAGE" "$REPO_DIR"
 echo "==> Running WITH model mounted"
 cleanup
 docker run -d --name "$MODEL_CONTAINER" -p "${PORT}:8000" \
-  -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
+  -e MODEL_PATH=/app/artifacts/xgb_best.joblib \
   -v "${REPO_DIR}/artifacts:/app/artifacts:ro" "$IMAGE" >/dev/null
 wait_for_health true
 

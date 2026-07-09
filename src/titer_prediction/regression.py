@@ -11,12 +11,12 @@ CLI::
     python -m titer_prediction.regression train \
         --data data/datahow_interview_train_data.csv \
         --targets data/datahow_interview_train_targets.csv \
-        --model artifacts/xgb_baseline.joblib
+        --model artifacts/xgb_best.joblib
 
     # predict on new inputs using a saved bundle
     python -m titer_prediction.regression predict \
         --data data/datahow_interview_test_data.csv \
-        --model artifacts/xgb_baseline.joblib \
+        --model artifacts/xgb_best.joblib \
         --out artifacts/test_predictions.csv
 """
 

@@ -1031,7 +1031,7 @@ def _(mo):
     The trained baseline is served behind a small **FastAPI** app
     (`titer_prediction.service`) with the two endpoints from the OpenAPI spec:
     `GET /health` and `POST /predict` (one experiment → predicted final titer). The
-    model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_baseline.joblib`).
+    model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_best.joblib`).
 
     ```bash
     # serve it

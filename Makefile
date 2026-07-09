@@ -1,5 +1,5 @@
 # Developer commands. Requires `uv` (and Docker for the docker-* targets).
-MODEL_PATH ?= artifacts/xgb_baseline.joblib
+MODEL_PATH ?= artifacts/xgb_best.joblib
 IMAGE ?= datahow-titer-service
 
 .PHONY: help test lint format check figures run-api batch docker-build docker-run

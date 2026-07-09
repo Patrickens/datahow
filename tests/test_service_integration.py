@@ -1,7 +1,7 @@
 """Integration tests that exercise the **real** model bundle (no mock).
 
 Unlike ``test_service.py`` (which mocks the predictor to test the API layer in
-isolation), these load the actual ``artifacts/xgb_baseline.joblib`` and run real
+isolation), these load the actual ``artifacts/xgb_best.joblib`` and run real
 inference end to end. They skip cleanly when the servable artifact or the
 confidential test CSV are absent (fresh clone / CI).
 """
@@ -23,10 +23,10 @@ from titer_prediction.service.errors import ModelLoadError
 from titer_prediction.service.model_loader import BundlePredictor, load_predictor
 
 REPO = Path(__file__).resolve().parents[1]
-MODEL = REPO / "artifacts" / "xgb_baseline.joblib"
+MODEL = REPO / "artifacts" / "xgb_best.joblib"
 TEST_DATA = REPO / "data" / "datahow_interview_test_data.csv"
 
-requires_model = pytest.mark.skipif(not MODEL.exists(), reason="xgb_baseline.joblib not present")
+requires_model = pytest.mark.skipif(not MODEL.exists(), reason="xgb_best.joblib not present")
 requires_test_data = pytest.mark.skipif(not TEST_DATA.exists(), reason="test data CSV not present")
 
 

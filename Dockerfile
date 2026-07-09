@@ -3,7 +3,7 @@
 # The model artifact is NOT baked in (it is git-ignored, derived from confidential
 # data). Mount it at runtime and point MODEL_PATH at it, e.g.:
 #   docker run --rm -p 8000:8000 \
-#     -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
+#     -e MODEL_PATH=/app/artifacts/xgb_best.joblib \
 #     -v "$PWD/artifacts:/app/artifacts" datahow-titer-service
 #
 # Note: the image installs the full project dependencies (the ML stack), so it is
@@ -17,7 +17,7 @@ WORKDIR /app
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    MODEL_PATH=/app/artifacts/xgb_baseline.joblib
+    MODEL_PATH=/app/artifacts/xgb_best.joblib
 
 # Build the package + install locked runtime deps (no dev tools).
 COPY pyproject.toml uv.lock README.md ./
