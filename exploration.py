@@ -210,10 +210,10 @@ def _(mo):
     highest-titer run shows the full sigmoid plateau.
 
     **What Gompertz cannot do.** It is a single monotone sigmoid, so it captures the
-    *shape of growth* but **not the sequential substrate dynamics** — the ordered
-    depletion of glucose then glutamine, feed-driven replenishment, or the lactate
-    production→consumption switch seen above. Those coupled, order-dependent effects
-    are exactly what the TSFEL features pick up, and what the CDE models most
+    *shape of growth* but **not the sequential substrate dynamics** — sequential substrate consumption, 
+    feed-driven replenishment, or the lactate production→consumption switch seen above. 
+    Those coupled, order-dependent effects
+    are exactly what the TSFEL features might pick up, and what the CDE models most
     naturally by integrating along the trajectory.
     """)
     return
@@ -333,16 +333,15 @@ def _(mo):
     and the **gain** used to score a candidate split are
 
     $$
-    \begin{aligned}
-    w_j^{*}
-      &= -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}, \\
-    \mathrm{gain}
-      &= \frac{1}{2}\left[
-        \frac{G_L^2}{H_L+\lambda}
-        + \frac{G_R^2}{H_R+\lambda}
-        - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}
-      \right] - \gamma .
-    \end{aligned}
+    w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}
+    $$
+
+    $$
+    \mathrm{gain} = \frac{1}{2}\left[
+    \frac{G_L^2}{H_L+\lambda}
+    + \frac{G_R^2}{H_R+\lambda}
+    - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}
+    \right] - \gamma
     $$
 
     Trees are grown greedily by maximising that gain. With our **squared-error** loss on
@@ -359,48 +358,10 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    import csv as _csv
     import json as _json
     from pathlib import Path as _Path
 
-    _sweep_path = _Path("artifacts/xgb_sweep_results.csv")
-    _metadata_path = _Path("artifacts/xgb_best_metadata.json")
-
-    _sweep_rows = list(_csv.DictReader(_sweep_path.open()))
-    _metadata = _json.loads(_metadata_path.read_text())
-    _best = _metadata["best_validation"]
-    _final_cv = _metadata["final_cv"]["xgboost"]
-    _baseline = _metadata["final_cv"]["baseline_mean"]
-    _cfg = _metadata["best_config"]
-
-    _top_rows = sorted(_sweep_rows, key=lambda row: float(row["xgb_r2"]), reverse=True)[:3]
-    _table = "\n".join(
-        [
-            "| Rank | Run | depth | eta | trees | subsample | colsample | lambda | min child | RMSE | MAPE | R² |",
-            "| ---- | --- | ----- | --- | ----- | --------- | --------- | ------ | --------- | ---- | ---- | -- |",
-            *[
-                "| "
-                + " | ".join(
-                    [
-                        str(rank),
-                        str(int(float(row["run_index"]))),
-                        str(int(float(row["max_depth"]))),
-                        f"{float(row['learning_rate']):.2f}",
-                        str(int(float(row["n_estimators"]))),
-                        f"{float(row['subsample']):.1f}",
-                        f"{float(row['colsample_bytree']):.1f}",
-                        f"{float(row['reg_lambda']):.1f}",
-                        str(int(float(row["min_child_weight"]))),
-                        f"{float(row['xgb_rmse']):.0f}",
-                        f"{100 * float(row['xgb_mape']):.1f}%",
-                        f"{float(row['xgb_r2']):.3f}",
-                    ]
-                )
-                + " |"
-                for rank, row in enumerate(_top_rows, start=1)
-            ],
-        ]
-    )
+    _metadata = _json.loads(_Path("artifacts/xgb_best_metadata.json").read_text())
 
     mo.md(
         f"""
@@ -408,19 +369,63 @@ def _(mo):
 
         I sampled **{_metadata["n_configs"]}** shallow-tree configurations with fixed
         seeds (`sweep={_metadata["seeds"]["sweep_seed"]}`,
-        `cv={_metadata["seeds"]["cv_seed"]}`). Each row was evaluated with repeated
-        K-fold CV against the same mean-predictor baseline, then the best configuration
-        was refit on all training experiments with `random_state={_metadata["seeds"]["refit_seed"]}`.
+        `cv={_metadata["seeds"]["cv_seed"]}`). The table below is sorted by validation
+        R² and shows the top configurations.
+        """
+    )
+    return
 
-        {_table}
 
-        The selected configuration was run **{int(_best["run_index"])}**:
+@app.cell
+def _():
+    import pandas as _pd
+
+    _xgb_sweep = _pd.read_csv("artifacts/xgb_sweep_results.csv")
+    _xgb_sweep_display = (
+        _xgb_sweep.sort_values("xgb_r2", ascending=False)
+        .head(5)
+        .loc[
+            :,
+            [
+                "run_index",
+                "max_depth",
+                "learning_rate",
+                "n_estimators",
+                "subsample",
+                "colsample_bytree",
+                "reg_lambda",
+                "min_child_weight",
+                "xgb_rmse",
+                "xgb_mape",
+                "xgb_r2",
+            ],
+        ]
+        .round({"xgb_rmse": 0, "xgb_mape": 3, "xgb_r2": 3})
+    )
+    _xgb_sweep_display
+    return
+
+
+@app.cell
+def _(mo):
+    import json as _json
+    from pathlib import Path as _Path
+
+    _metadata = _json.loads(_Path("artifacts/xgb_best_metadata.json").read_text())
+    _best = _metadata["best_validation"]
+    _final_cv = _metadata["final_cv"]["xgboost"]
+    _baseline = _metadata["final_cv"]["baseline_mean"]
+    _cfg = _metadata["best_config"]
+
+    mo.md(
+        f"""
+        The best configuration was run **{int(_best["run_index"])}**:
         `max_depth={_cfg["max_depth"]}`, `learning_rate={_cfg["learning_rate"]}`,
         `n_estimators={_cfg["n_estimators"]}`, `subsample={_cfg["subsample"]}`,
         `colsample_bytree={_cfg["colsample_bytree"]}`, `reg_lambda={_cfg["reg_lambda"]}`,
         `min_child_weight={_cfg["min_child_weight"]}`.
 
-        After the final refit/evaluation pass, XGBoost reached **RMSE ≈
+        After the final refit/evaluation pass it reached **RMSE ≈
         {_final_cv["rmse"]:.0f}**, **MAPE ≈ {100 * _final_cv["mape"]:.1f}%**, and
         **R² ≈ {_final_cv["r2"]:.2f}**, versus the mean baseline at **RMSE ≈
         {_baseline["rmse"]:.0f}** and **R² ≈ {_baseline["r2"]:.2f}**.
@@ -495,10 +500,10 @@ def _(mo):
 
     A *controlled* differential equation drives a learned hidden state
     $h(s)\in\mathbb{R}^{d}$ along an input/control path
-    $C(s)\in\mathbb{R}^{c}$ built by interpolating the observed trajectory:
+    $C(s)\in\mathbb{R}^{|C|}$ built by interpolating the observed trajectory:
 
     $$
-    C(s) = [t(s), W(s), X_{\mathrm{obs}}(s)], \qquad c = 1 + n_W + n_X
+    C(s) = [t(s), W(s), X_{\mathrm{obs}}(s)], \qquad |C| = 1 + |W| + |X_{\mathrm{obs}}|
     $$
 
     $$
@@ -511,7 +516,7 @@ def _(mo):
     \hat{y} = \ell_\theta(h(S)).
     $$
 
-    - The **vector field** $f_\theta:\mathbb{R}^{d}\to\mathbb{R}^{d\times c}$ is a
+    - The **vector field** $f_\theta:\mathbb{R}^{d}\to\mathbb{R}^{d\times |C|}$ is a
       neural network mapping the hidden state to a matrix; the integrand
       $f_\theta(h)\,\mathrm{d}C$ is a matrix–vector product, so the model learns how the
       *rates of change of the inputs* steer the latent state (a Riemann–Stieltjes
@@ -749,44 +754,10 @@ def _(plotting):
 
 @app.cell
 def _(mo):
-    import csv as _csv
     import json as _json
     from pathlib import Path as _Path
 
-    _sweep_path = _Path("artifacts/cde_sweep_results.csv")
-    _metadata_path = _Path("artifacts/cde_best_metadata.json")
-
-    _sweep_rows = list(_csv.DictReader(_sweep_path.open()))
-    _metadata = _json.loads(_metadata_path.read_text())
-    _best = _metadata["best_validation"]
-    _cfg = _metadata["best_config"]
-
-    _top_rows = sorted(_sweep_rows, key=lambda row: float(row["val_r2"]), reverse=True)[:3]
-    _table = "\n".join(
-        [
-            "| Rank | Run | epochs | lr | hidden | width | depth | RMSE | MAPE | R² |",
-            "| ---- | --- | ------ | -- | ------ | ----- | ----- | ---- | ---- | -- |",
-            *[
-                "| "
-                + " | ".join(
-                    [
-                        str(rank),
-                        str(int(float(row["run_index"]))),
-                        str(int(float(row["epochs"]))),
-                        f"{float(row['lr']):.3g}",
-                        str(int(float(row["hidden_size"]))),
-                        str(int(float(row["width"]))),
-                        str(int(float(row["depth"]))),
-                        f"{float(row['val_rmse']):.0f}",
-                        f"{100 * float(row['val_mape']):.1f}%",
-                        f"{float(row['val_r2']):.3f}",
-                    ]
-                )
-                + " |"
-                for rank, row in enumerate(_top_rows, start=1)
-            ],
-        ]
-    )
+    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
 
     mo.md(
         f"""
@@ -796,11 +767,54 @@ def _(mo):
         (`sweep={_metadata["seeds"]["sweep_seed"]}`,
         `split={_metadata["seeds"]["split_seed"]}`,
         `refit={_metadata["seeds"]["refit_seed"]}`). Each run used an explicit
-        model-initialisation seed and the same fixed 20% validation holdout.
+        model-initialisation seed and the same fixed 20% validation holdout. The table
+        below is sorted by validation R² and shows the top configurations.
+        """
+    )
+    return
 
-        {_table}
 
-        The selected configuration was run **{int(_best["run_index"])}**:
+@app.cell
+def _():
+    import pandas as _pd
+
+    _cde_sweep = _pd.read_csv("artifacts/cde_sweep_results.csv")
+    _cde_sweep_display = (
+        _cde_sweep.sort_values("val_r2", ascending=False)
+        .head(5)
+        .loc[
+            :,
+            [
+                "run_index",
+                "epochs",
+                "lr",
+                "hidden_size",
+                "width",
+                "depth",
+                "model_seed",
+                "val_rmse",
+                "val_mape",
+                "val_r2",
+            ],
+        ]
+        .round({"lr": 4, "val_rmse": 0, "val_mape": 3, "val_r2": 3})
+    )
+    _cde_sweep_display
+    return
+
+
+@app.cell
+def _(mo):
+    import json as _json
+    from pathlib import Path as _Path
+
+    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
+    _best = _metadata["best_validation"]
+    _cfg = _metadata["best_config"]
+
+    mo.md(
+        f"""
+        The best configuration was run **{int(_best["run_index"])}**:
         `epochs={_cfg["epochs"]}`, `lr={_cfg["lr"]}`, `hidden_size={_cfg["hidden_size"]}`,
         `width={_cfg["width"]}`, `depth={_cfg["depth"]}`,
         `model_seed={_cfg["model_seed"]}`.

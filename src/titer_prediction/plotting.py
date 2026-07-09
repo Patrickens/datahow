@@ -9,6 +9,7 @@ source of truth. Regenerate all README figures with::
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -31,6 +32,8 @@ FIGURES_DIR = REPO_ROOT / "figures"
 
 TRAIN_DATA = DATA_DIR / "datahow_interview_train_data.csv"
 TRAIN_TARGETS = DATA_DIR / "datahow_interview_train_targets.csv"
+XGB_BEST_METADATA = REPO_ROOT / "artifacts" / "xgb_best_metadata.json"
+CDE_BEST_METADATA = REPO_ROOT / "artifacts" / "cde_best_metadata.json"
 
 _CMAP = plt.get_cmap("viridis")
 
@@ -53,6 +56,22 @@ def _add_titer_colorbar(fig, norm: Normalize, label: str = "Final titer") -> Non
     sm = ScalarMappable(norm=norm, cmap=_CMAP)
     sm.set_array([])
     fig.colorbar(sm, ax=fig.axes, label=label, fraction=0.046, pad=0.02)
+
+
+def _load_json(path: Path) -> dict:
+    return json.loads(path.read_text())
+
+
+def _best_xgb_cv_params() -> dict:
+    metadata = _load_json(XGB_BEST_METADATA)
+    params = dict(metadata["best_config"])
+    params["random_state"] = int(metadata["seeds"]["selected_estimator_seed"])
+    params["n_jobs"] = -1
+    return params
+
+
+def _best_xgb_refit_params() -> dict:
+    return dict(_load_json(XGB_BEST_METADATA)["refit_params"])
 
 
 # ---------------------------------------------------------------------------
@@ -227,11 +246,17 @@ def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = Non
     """
     if X is None or y is None:
         X, y = baseline_matrix()
-    oof = cross_val_predict(reg.build_model(), X, y, cv=KFold(5, shuffle=True, random_state=0))
+    metadata = _load_json(XGB_BEST_METADATA)
+    oof = cross_val_predict(
+        reg.build_model(_best_xgb_cv_params()),
+        X,
+        y,
+        cv=KFold(5, shuffle=True, random_state=int(metadata["seeds"]["cv_seed"])),
+    )
     resid = y.to_numpy() - oof
 
-    # Robust headline metrics: repeated 5-fold CV (matches regression.py / README).
-    cv = reg.cross_validate(X, y)["xgboost"]
+    # Robust headline metrics from the final repeated-CV pass in the sweep metadata.
+    cv = metadata["final_cv"]["xgboost"]
     r2, rmse = cv["r2"], cv["rmse"]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
@@ -255,7 +280,7 @@ def plot_feature_importance(
     """Top XGBoost feature importances (which engineered features matter)."""
     if X is None or y is None:
         X, y = baseline_matrix()
-    model = reg.build_model()
+    model = reg.build_model(_best_xgb_refit_params())
     model.fit(X, y)
     importances = pd.Series(model.regressor_.feature_importances_, index=X.columns)
     top_feats = importances.sort_values(ascending=False).head(top).iloc[::-1]
@@ -365,11 +390,27 @@ def plot_cde_toy_state():
     return fig
 
 
-def plot_cde_training_curves(epochs: int = 250):
-    """Train a short neural CDE and plot its train/validation learning curves."""
+def plot_cde_training_curves(epochs: int | None = None):
+    """Train the selected neural CDE config and plot its learning curves."""
     from . import cde  # lazy: only this illustration pulls in the JAX stack
 
-    _, _, history = cde.train(TRAIN_DATA, TRAIN_TARGETS, epochs=epochs)
+    metadata = _load_json(CDE_BEST_METADATA)
+    cfg = metadata["best_config"]
+    seeds = metadata["seeds"]
+    epochs = int(cfg["epochs"] if epochs is None else epochs)
+    _, _, history = cde.train(
+        TRAIN_DATA,
+        TRAIN_TARGETS,
+        hidden_size=int(cfg["hidden_size"]),
+        width=int(cfg["width"]),
+        depth=int(cfg["depth"]),
+        epochs=epochs,
+        lr=float(cfg["lr"]),
+        split_seed=int(seeds["split_seed"]),
+        model_seed=int(seeds["model_seed"]),
+        refit_seed=int(seeds["refit_seed"]),
+        refit_all=False,
+    )
     hist = pd.DataFrame(history)
 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
@@ -379,7 +420,7 @@ def plot_cde_training_curves(epochs: int = 250):
     ax.set(
         xlabel="epoch",
         ylabel="MSE (standardised log-titer)",
-        title=f"Neural CDE training curves ({epochs} epochs)",
+        title=f"Best neural CDE training curves ({epochs} epochs)",
     )
     ax.legend(loc="upper right", fontsize=9)
     if "val_r2" in hist:
@@ -406,7 +447,6 @@ def main() -> None:
         "input_state_timecourses.png": plot_state_timecourses(df, targets),
         "input_control_timecourses.png": plot_control_timecourses(df, targets),
         "gompertz_fits.png": plot_gompertz_examples(df, targets),
-        "gompertz_signal.png": plot_gompertz_signal(df, targets),
         "regression_cv.png": plot_cv_predictions(X, yt),
         "feature_importance.png": plot_feature_importance(X, yt),
         "cde_interpolation.png": plot_interpolation_comparison(),
