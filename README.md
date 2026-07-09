@@ -225,7 +225,25 @@ level, AUC, and feed-accounting features:
 
 ![Regression CV](figures/regression_cv.png)
 
-![Feature importance](figures/feature_importance.png)
+Top 15 features by XGBoost gain (from `artifacts/feature_importance.csv`):
+
+| Feature | Importance |
+| ------- | ---------- |
+| Total cell density AUC | 0.185 |
+| Gln apparent consumed | 0.113 |
+| VCD area under the curve | 0.087 |
+| Glc apparent consumed | 0.075 |
+| VCD centroid | 0.049 |
+| Lysed area under the curve | 0.046 |
+| Lysed signal distance | 0.045 |
+| Gln signal distance | 0.038 |
+| VCD median | 0.028 |
+| Lac signal distance | 0.025 |
+| Lysed mean diff | 0.024 |
+| Lysed absolute energy | 0.023 |
+| Glc total fed | 0.019 |
+| Lysed root mean square | 0.017 |
+| Amm standard deviation | 0.016 |
 
 ## Results (cross-validated / held-out)
 

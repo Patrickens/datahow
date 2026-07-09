@@ -34,6 +34,8 @@ TRAIN_DATA = DATA_DIR / "datahow_interview_train_data.csv"
 TRAIN_TARGETS = DATA_DIR / "datahow_interview_train_targets.csv"
 XGB_BEST_METADATA = REPO_ROOT / "artifacts" / "xgb_best_metadata.json"
 CDE_BEST_METADATA = REPO_ROOT / "artifacts" / "cde_best_metadata.json"
+FEATURE_IMPORTANCE_TABLE = REPO_ROOT / "artifacts" / "feature_importance.csv"
+CDE_TRAINING_HISTORY = REPO_ROOT / "artifacts" / "cde_training_history.csv"
 
 _CMAP = plt.get_cmap("viridis")
 
@@ -224,25 +226,6 @@ def plot_gompertz_examples(df: pd.DataFrame, targets: pd.Series, n_examples: int
     return fig
 
 
-def plot_gompertz_signal(df: pd.DataFrame, targets: pd.Series):
-    """Interpretable Gompertz parameters vs. titer (do they carry signal?)."""
-    gomp = feats.gompertz_features(df, "X:VCD")
-    y = targets.reindex(gomp.index)
-
-    pairs = [
-        ("gompertz_X:VCD_a", "amplitude a (max growth)"),
-        ("gompertz_X:VCD_k_g", "growth rate k_g"),
-        ("gompertz_X:VCD_t_i", "inflection time t_i"),
-    ]
-    fig, axes = plt.subplots(1, 3, figsize=(13, 4), constrained_layout=True)
-    for ax, (col, label) in zip(axes, pairs, strict=True):
-        ax.scatter(gomp[col], y, s=18, alpha=0.7, color="#2ca02c")
-        corr = np.corrcoef(gomp[col], y)[0, 1]
-        ax.set(xlabel=label, ylabel="Final titer", title=f"corr = {corr:+.2f}")
-    fig.suptitle("Gompertz parameters vs. titer (interpretable features)", fontweight="bold")
-    return fig
-
-
 # ---------------------------------------------------------------------------
 # 3. Regression
 # ---------------------------------------------------------------------------
@@ -289,23 +272,29 @@ def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = Non
     return fig
 
 
-def plot_feature_importance(
-    X: pd.DataFrame | None = None, y: pd.Series | None = None, top: int = 15
-):
-    """Top XGBoost feature importances (which engineered features matter)."""
-    if X is None or y is None:
-        X, y = baseline_matrix()
-    model = reg.build_model(_best_xgb_refit_params())
-    model.fit(X, y)
-    importances = pd.Series(model.regressor_.feature_importances_, index=X.columns)
-    top_feats = importances.sort_values(ascending=False).head(top).iloc[::-1]
-    labels = [_pretty_feature_label(name) for name in top_feats.index]
+def feature_importance_table(top: int = 15, regenerate: bool = False) -> pd.DataFrame:
+    """Top XGBoost feature importances as a table (``feature``, ``label``, ``importance``).
 
-    fig, ax = plt.subplots(figsize=(9, 6), constrained_layout=True)
-    ax.barh(labels, top_feats.to_numpy(), color="#4c72b0")
-    ax.set(xlabel="Importance (gain)", title=f"Top {top} baseline features")
-    ax.tick_params(axis="y", labelsize=8)
-    return fig
+    The full ranking is cached to ``artifacts/feature_importance.csv`` so the
+    notebook need not refit the model on every run. Pass ``regenerate=True`` (or
+    delete the cache) to refit the best model and overwrite it.
+    """
+    if regenerate or not FEATURE_IMPORTANCE_TABLE.exists():
+        X, y = baseline_matrix()
+        model = reg.build_model(_best_xgb_refit_params())
+        model.fit(X, y)
+        importances = pd.Series(model.regressor_.feature_importances_, index=X.columns)
+        table = (
+            importances.sort_values(ascending=False)
+            .rename_axis("feature")
+            .reset_index(name="importance")
+        )
+        table.insert(1, "label", [_pretty_feature_label(n) for n in table["feature"]])
+        FEATURE_IMPORTANCE_TABLE.parent.mkdir(exist_ok=True)
+        table.to_csv(FEATURE_IMPORTANCE_TABLE, index=False)
+    else:
+        table = pd.read_csv(FEATURE_IMPORTANCE_TABLE)
+    return table.head(top).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -406,8 +395,18 @@ def plot_cde_toy_state():
     return fig
 
 
-def plot_cde_training_curves(epochs: int | None = None):
-    """Train the selected neural CDE config and plot raw-RMSE learning curves."""
+def cde_training_history(
+    epochs: int | None = None, regenerate: bool = False
+) -> pd.DataFrame:
+    """Per-epoch training history for the selected neural CDE config.
+
+    Cached to ``artifacts/cde_training_history.csv`` so the notebook / HTML export
+    need not retrain the CDE on every run (a few minutes on the JAX stack). Pass
+    ``regenerate=True`` (or delete the cache) to retrain and overwrite.
+    """
+    if not regenerate and CDE_TRAINING_HISTORY.exists():
+        return pd.read_csv(CDE_TRAINING_HISTORY)
+
     from . import cde  # lazy: only this illustration pulls in the JAX stack
 
     metadata = _load_json(CDE_BEST_METADATA)
@@ -428,7 +427,16 @@ def plot_cde_training_curves(epochs: int | None = None):
         refit_all=False,
     )
     hist = pd.DataFrame(history)
+    CDE_TRAINING_HISTORY.parent.mkdir(exist_ok=True)
+    hist.to_csv(CDE_TRAINING_HISTORY, index=False)
+    return hist
+
+
+def plot_cde_training_curves(epochs: int | None = None, regenerate: bool = False):
+    """Plot the neural CDE learning curves from cached (or freshly trained) history."""
+    hist = cde_training_history(epochs=epochs, regenerate=regenerate)
     plot_hist = hist[hist["epoch"] > 0].copy()
+    n_epochs = int(hist["epoch"].max()) + 1  # last logged epoch is epochs - 1
 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.plot(
@@ -453,7 +461,7 @@ def plot_cde_training_curves(epochs: int | None = None):
     ax.set(
         xlabel="epoch",
         ylabel="RMSE (titer units, log scale)",
-        title=f"Best neural CDE learning curves ({epochs} epochs; epoch 0 omitted)",
+        title=f"Best neural CDE learning curves ({n_epochs} epochs; epoch 0 omitted)",
     )
 
     lines = ax.get_lines()
@@ -495,7 +503,6 @@ def main() -> None:
         "input_control_timecourses.png": plot_control_timecourses(df, targets),
         "gompertz_fits.png": plot_gompertz_examples(df, targets),
         "regression_cv.png": plot_cv_predictions(X, yt),
-        "feature_importance.png": plot_feature_importance(X, yt),
         "cde_interpolation.png": plot_interpolation_comparison(),
         "cde_path_parameter.png": plot_path_parameter(),
         "cde_toy_state.png": plot_cde_toy_state(),

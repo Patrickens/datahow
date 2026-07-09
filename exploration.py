@@ -329,18 +329,17 @@ def _(mo):
     and the **gain** used to score a candidate split are
 
     $$
-    w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}
+    w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda},
+    \qquad
+    \text{gain} = \tfrac{1}{2}\left[
+        \frac{G_L^2}{H_L + \lambda}
+        + \frac{G_R^2}{H_R + \lambda}
+        - \frac{(G_L + G_R)^2}{H_L + H_R + \lambda}
+    \right] - \gamma,
     $$
 
-    ```text
-    gain = 0.5 * (
-        G_L^2 / (H_L + lambda)
-        + G_R^2 / (H_R + lambda)
-        - (G_L + G_R)^2 / (H_L + H_R + lambda)
-    ) - gamma
-    ```
-
-    Trees are grown greedily by maximising that gain. With our **squared-error** loss on
+    where $G_{L},G_{R}$ and $H_{L},H_{R}$ are the sums of $g_i$ and $h_i$ over the
+    left/right child. Trees are grown greedily by maximising that gain. With our **squared-error** loss on
     $u=\log(1+y)$ the statistics are simply $g_i = \hat{u}_i - u_i$ and $h_i = 1$.
 
     **Why this model here.** Trees handle heterogeneous, unscaled features and missing
@@ -465,21 +464,24 @@ def _(mo):
     ### Which features matter?
 
     The gain-based importances are a reassuring sanity check — and a vindication of the
-    feature-engineering choice. The top features are **biologically meaningful**: the level and
-    **area under the curve of VCD** (`tsfel_X:VCD_Area under the curve` is essentially
-    the **integral of viable cells**, the classical mechanistic predictor of product),
-    followed by substrate/byproduct AUCs, levels, and feed-accounting summaries. This is
-    exactly the kind of feature catch22 could **not** provide — its top-ranked features
-    were abstract dynamical descriptors, whereas here the model leans on quantities a
-    process scientist would reach for.
+    feature-engineering choice. The top features are all **biologically meaningful**. Leading
+    the table is the **AUC of estimated total cell density** (`bio_total_cell_density_auc`,
+    our custom cell-population feature), followed by the **apparent glutamine and glucose
+    consumed** (feed-accounting) and the **area under the VCD curve**
+    (`tsfel_X:VCD_Area under the curve`, essentially the **integral of viable cells** — the
+    classical mechanistic predictor of product). The rest are substrate/byproduct AUCs,
+    levels, and feed summaries. This is exactly the kind of feature catch22 could **not**
+    provide — its top-ranked features were abstract dynamical descriptors, whereas here the
+    model leans on quantities a process scientist would reach for.
     """)
     return
 
 
 @app.cell
-def _(X, plotting, y):
-    fig_importance = plotting.plot_feature_importance(X, y)
-    fig_importance
+def _(plotting):
+    # Cached to artifacts/feature_importance.csv; pass regenerate=True to refit.
+    importance_table = plotting.feature_importance_table(top=15)
+    importance_table
     return
 
 
