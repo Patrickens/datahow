@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .config import get_settings
@@ -53,9 +55,19 @@ def get_predictor(request: Request) -> Predictor:
     return predictor
 
 
+# The OpenAPI spec (data/inference_server_spec.yml) specifies 400 for an invalid
+# request payload, so both our own PayloadError and FastAPI's built-in Pydantic
+# request-validation failures are mapped to 400 (overriding the default 422).
 @app.exception_handler(PayloadError)
 async def _handle_payload_error(_request: Request, exc: PayloadError) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": str(exc)})
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
+@app.exception_handler(RequestValidationError)
+async def _handle_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+    # jsonable_encoder mirrors FastAPI's default handler: it renders the error
+    # list (which can embed raw exceptions in ``ctx``) into JSON-safe content.
+    return JSONResponse(status_code=400, content={"detail": jsonable_encoder(exc.errors())})
 
 
 @app.exception_handler(ModelNotLoadedError)

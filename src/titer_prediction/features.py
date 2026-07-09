@@ -304,11 +304,8 @@ def static_features(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Bioprocess accounting features
 # ---------------------------------------------------------------------------
-def _auc(time: np.ndarray, values: np.ndarray) -> float:
-    finite = np.isfinite(time) & np.isfinite(values)
-    if finite.sum() < 2:
-        return np.nan
-    return float(np.trapezoid(values[finite], time[finite]))
+# Trajectory integral shared with the sequence loaders; see data_preprocessing.
+_auc = dp._auc
 
 
 def substrate_consumption_features(
@@ -428,15 +425,4 @@ def build_baseline_dataset(
     """End-to-end: raw CSV(s) -> baseline features aligned with targets."""
     parsed = dp.read_inputs(data_path)
     features = build_baseline_features(parsed, tsfel_channels)
-
-    targets = None
-    if targets_path is not None:
-        targets = dp.read_targets(targets_path)
-        missing = set(features.index) - set(targets.index)
-        if missing:
-            raise ValueError(
-                f"{len(missing)} experiments have no target (e.g. {sorted(missing)[:3]})."
-            )
-        targets = targets.reindex(features.index)
-
-    return dp.TabularDataset(features=features, targets=targets)
+    return dp.assemble_tabular(features, targets_path)

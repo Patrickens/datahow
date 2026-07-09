@@ -1,29 +1,19 @@
-"""Preprocess the raw bioprocess CSVs into model-ready representations.
+"""Load and parse the raw bioprocess CSVs into model-ready representations.
 
-Two representations are produced from the same parsed source:
+This module owns the shared *loading* concerns — reading the CSVs, forward-
+filling the day-0 ``Z:`` design scalars, and validating the column schema — plus
+two container shapes built from the same parsed source:
 
-* **Tabular features** (one row per experiment) for the XGBoost baseline. Each
-  variable-length trajectory is collapsed into a fixed set of aggregate
-  statistics, alongside the pass-through ``Z:`` design scalars.
-* **Ragged sequences** (one record per experiment) for the neural CDE. Padding,
-  standardisation, and path interpolation are intentionally left to the CDE
-  module, which uses diffrax rather than re-implementing them here.
-
-Run as a CLI to materialise the tabular features to disk::
-
-    python -m titer_prediction.data_preprocessing \
-        --data data/datahow_interview_train_data.csv \
-        --targets data/datahow_interview_train_targets.csv \
-        --out artifacts/train_features.parquet
-
-The ``--targets`` argument is optional: omit it for the test inputs, whose
-targets are withheld.
+* :class:`TabularDataset` — a per-experiment feature matrix (built by
+  :mod:`titer_prediction.features`) aligned with its targets, for the XGBoost
+  baseline.
+* :class:`SequenceData` — ragged per-experiment trajectories for the neural CDE.
+  Padding, standardisation, and path interpolation are intentionally left to the
+  CDE module (diffrax) rather than re-implemented here.
 """
 
 from __future__ import annotations
 
-import argparse
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,8 +21,6 @@ import numpy as np
 import pandas as pd
 
 from . import schema
-
-logger = logging.getLogger(__name__)
 
 # numpy renamed ``trapz`` -> ``trapezoid`` in 2.0 (and removed ``trapz`` in 2.x).
 _trapezoid = getattr(np, "trapezoid", None) or np.trapz  # type: ignore[attr-defined]
@@ -135,85 +123,26 @@ def _validate_input_columns(df: pd.DataFrame) -> None:
 # Feature engineering (tabular / baseline)
 # ---------------------------------------------------------------------------
 def _auc(time: np.ndarray, values: np.ndarray) -> float:
-    """Trapezoidal integral of a trajectory over time (0 if <2 points)."""
-    if time.size < 2:
-        return 0.0
-    return float(_trapezoid(values, time))
+    """Trapezoidal integral of a trajectory over time.
 
-
-def _slope(time: np.ndarray, values: np.ndarray) -> float:
-    """Ordinary least-squares slope of ``values`` against ``time``."""
-    if time.size < 2 or np.ptp(time) == 0:
-        return 0.0
-    return float(np.polyfit(time, values, 1)[0])
-
-
-def _channel_stats(name: str, time: np.ndarray, values: np.ndarray) -> dict[str, float]:
-    """Aggregate one trajectory into a fixed set of named statistics.
-
-    NaNs are dropped before aggregation so partially-missing channels still
-    yield sensible summaries. The chosen aggregates capture level (first/last/
-    mean), spread (min/max/std), accumulation (AUC — e.g. integral of viable
-    cells) and trend (slope).
+    NaNs in either array are dropped pairwise first; returns NaN if fewer than
+    two finite points remain. Shared by the feature builders in
+    :mod:`titer_prediction.features`.
     """
-    finite = np.isfinite(values)
-    t, v = time[finite], values[finite]
-    if v.size == 0:
-        keys = ("first", "last", "min", "max", "mean", "std", "auc", "slope")
-        return {f"{name}_{k}": np.nan for k in keys}
-    return {
-        f"{name}_first": float(v[0]),
-        f"{name}_last": float(v[-1]),
-        f"{name}_min": float(v.min()),
-        f"{name}_max": float(v.max()),
-        f"{name}_mean": float(v.mean()),
-        f"{name}_std": float(v.std()),
-        f"{name}_auc": _auc(t, v),
-        f"{name}_slope": _slope(t, v),
-    }
+    time = np.asarray(time, dtype=float)
+    values = np.asarray(values, dtype=float)
+    finite = np.isfinite(time) & np.isfinite(values)
+    if finite.sum() < 2:
+        return np.nan
+    return float(_trapezoid(values[finite], time[finite]))
 
 
-def build_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Collapse the long per-timestep frame into one feature row per experiment.
+def assemble_tabular(features: pd.DataFrame, targets_path: str | Path | None) -> TabularDataset:
+    """Align an already-built feature matrix with its targets into a dataset.
 
-    Features:
-      * the ``Z:`` design scalars (constant per experiment), passed through;
-      * ``duration_observed`` (last observed day) and ``n_timepoints``;
-      * per-channel aggregates for every ``W:`` and ``X:`` trajectory.
+    Shared by the feature-matrix builders: loads the targets (if given), checks
+    every experiment has one, and reindexes them to the feature rows.
     """
-    static_cols = schema.static_columns(df)
-    traj_cols = schema.control_columns(df) + schema.state_columns(df)
-
-    rows: dict[str, dict[str, float]] = {}
-    for exp, group in df.groupby(schema.EXP_COL, sort=False):
-        group = group.sort_values(schema.TIME_COL)
-        time = group[schema.TIME_COL].to_numpy(dtype=float)
-
-        feat: dict[str, float] = {}
-        for col in static_cols:
-            series = group[col].dropna()
-            feat[col] = float(series.iloc[0]) if not series.empty else np.nan
-
-        feat["duration_observed"] = float(time.max()) if time.size else np.nan
-        feat["n_timepoints"] = float(time.size)
-
-        for col in traj_cols:
-            feat.update(_channel_stats(col, time, group[col].to_numpy(dtype=float)))
-
-        rows[exp] = feat
-
-    features = pd.DataFrame.from_dict(rows, orient="index")
-    features.index.name = schema.EXP_COL
-    return features
-
-
-def build_tabular_dataset(
-    data_path: str | Path, targets_path: str | Path | None = None
-) -> TabularDataset:
-    """End-to-end: raw CSV(s) -> aligned per-experiment features and targets."""
-    df = read_inputs(data_path)
-    features = build_features(df)
-
     targets: pd.Series | None = None
     if targets_path is not None:
         targets = read_targets(targets_path)
@@ -284,70 +213,3 @@ def build_sequences(data_path: str | Path, targets_path: str | Path | None = Non
         channel_names=channel_names,
         static_names=static_names,
     )
-
-
-# ---------------------------------------------------------------------------
-# Persistence
-# ---------------------------------------------------------------------------
-def save_tabular(dataset: TabularDataset, out_path: str | Path) -> None:
-    """Write the feature matrix (plus target column if present) to parquet."""
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    table = dataset.features.copy()
-    if dataset.targets is not None:
-        table[schema.TARGET_COL] = dataset.targets
-    # Reset index so the experiment id survives the round-trip as a column.
-    table.reset_index().to_parquet(out_path, index=False)
-    logger.info("Wrote %d experiments x %d features to %s", *table.shape, out_path)
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-def _build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Build model-ready features from the raw bioprocess CSVs.",
-    )
-    parser.add_argument("--data", required=True, help="Path to the inputs CSV.")
-    parser.add_argument(
-        "--targets",
-        default=None,
-        help="Path to the targets CSV (omit for held-out test inputs).",
-    )
-    parser.add_argument(
-        "--out",
-        default=None,
-        help="Where to write the parquet feature table (optional).",
-    )
-    parser.add_argument(
-        "--log-level",
-        default="INFO",
-        help="Logging level (DEBUG, INFO, WARNING, ...).",
-    )
-    return parser
-
-
-def main(argv: list[str] | None = None) -> int:
-    """CLI entry point: build features and optionally persist them."""
-    args = _build_arg_parser().parse_args(argv)
-    logging.basicConfig(
-        level=args.log_level.upper(),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    dataset = build_tabular_dataset(args.data, args.targets)
-    n_exp, n_feat = dataset.features.shape
-    logger.info("Built features for %d experiments with %d features.", n_exp, n_feat)
-    if dataset.has_targets:
-        t = dataset.targets
-        logger.info("Target titer: min=%.1f max=%.1f mean=%.1f", t.min(), t.max(), t.mean())
-
-    if args.out:
-        save_tabular(dataset, args.out)
-    else:
-        logger.info("No --out given; not writing to disk.")
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())

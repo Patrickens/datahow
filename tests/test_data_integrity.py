@@ -101,20 +101,20 @@ def test_read_inputs_accepts_dataframe(synthetic_long):
 
 
 def test_features_have_one_row_per_experiment(synthetic_long):
-    features = dp.build_features(synthetic_long)
+    features = feats.static_features(synthetic_long)
     assert list(features.index) == ["A", "B"]
     assert features.loc["A", "n_timepoints"] == 3
     assert features.loc["B", "n_timepoints"] == 2
 
 
-def test_channel_aggregates_are_correct(synthetic_long):
-    features = dp.build_features(synthetic_long)
-    # Exp A VCD trajectory = [1, 2, 4] over t = [0, 1, 2]
-    assert features.loc["A", "X:VCD_first"] == 1.0
-    assert features.loc["A", "X:VCD_last"] == 4.0
-    assert features.loc["A", "X:VCD_max"] == 4.0
-    # Trapezoidal AUC of [1,2,4] over [0,1,2] = 1.5 + 3.0 = 4.5
-    assert features.loc["A", "X:VCD_auc"] == pytest.approx(4.5)
+def test_auc_helper_is_trapezoidal_and_nan_safe():
+    t = np.array([0.0, 1.0, 2.0])
+    # Trapezoidal AUC of [1, 2, 4] over [0, 1, 2] = 1.5 + 3.0 = 4.5
+    assert dp._auc(t, np.array([1.0, 2.0, 4.0])) == pytest.approx(4.5)
+    # Fewer than two finite points -> NaN (not 0), so absence is distinguishable.
+    assert np.isnan(dp._auc(np.array([0.0]), np.array([5.0])))
+    # Non-finite pairs are dropped before integrating.
+    assert np.isnan(dp._auc(t, np.array([np.nan, np.nan, 1.0])))
 
 
 def test_substrate_consumption_features_add_feed_accounting_only():
@@ -289,16 +289,22 @@ def test_train_schema_matches_expectations():
 
 @requires_real_data
 def test_every_train_experiment_has_exactly_one_target():
-    ds = dp.build_tabular_dataset(TRAIN_DATA, TRAIN_TARGETS)
+    ds = feats.build_baseline_dataset(TRAIN_DATA, TRAIN_TARGETS)
     assert ds.has_targets
     assert not ds.targets.isna().any()
     assert ds.features.index.is_unique
 
 
 @requires_real_data
-def test_no_missing_values_in_train_features():
-    ds = dp.build_tabular_dataset(TRAIN_DATA, TRAIN_TARGETS)
-    assert not ds.features.isna().any().any()
+def test_baseline_features_present_for_every_experiment():
+    ds = feats.build_baseline_dataset(TRAIN_DATA, TRAIN_TARGETS)
+    df = dp.read_inputs(TRAIN_DATA)
+    assert set(ds.features.index) == set(df[schema.EXP_COL].unique())
+    # Key engineered features are present. NaNs are allowed *by design* here
+    # (failed Gompertz fits, undefined TSFEL, lysed>=1) — XGBoost handles them
+    # natively — so we assert on structure, not absence of NaN.
+    assert "tsfel_X:VCD_Area under the curve" in ds.features.columns
+    assert "bio_total_cell_density_auc" in ds.features.columns
 
 
 @requires_real_data
@@ -311,5 +317,5 @@ def test_static_columns_constant_within_experiment():
 
 @requires_real_data
 def test_targets_are_positive():
-    ds = dp.build_tabular_dataset(TRAIN_DATA, TRAIN_TARGETS)
+    ds = feats.build_baseline_dataset(TRAIN_DATA, TRAIN_TARGETS)
     assert (ds.targets > 0).all()

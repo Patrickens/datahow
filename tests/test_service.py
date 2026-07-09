@@ -108,26 +108,28 @@ def test_predict_returns_503_without_model(valid_payload):
 # ---------------------------------------------------------------------------
 # Predict — validation (422)
 # ---------------------------------------------------------------------------
+# The OpenAPI spec specifies 400 for an invalid payload (app.py maps both
+# PayloadError and Pydantic RequestValidationError to 400).
 def test_non_increasing_timestamps_rejected(client, valid_payload):
     valid_payload["timestamps"] = [0.0, 0.0, 1.0]
-    assert client.post("/predict", json=valid_payload).status_code == 422
+    assert client.post("/predict", json=valid_payload).status_code == 400
 
 
 def test_wrong_length_channel_rejected(client, valid_payload):
     valid_payload["values"]["W:temp"] = [1.0, 2.0]  # should be length 3
-    assert client.post("/predict", json=valid_payload).status_code == 422
+    assert client.post("/predict", json=valid_payload).status_code == 400
 
 
 def test_missing_prefix_group_rejected(client, valid_payload):
     for col in list(valid_payload["values"]):
         if col.startswith("X:"):
             del valid_payload["values"][col]  # remove all X: variables
-    assert client.post("/predict", json=valid_payload).status_code == 422
+    assert client.post("/predict", json=valid_payload).status_code == 400
 
 
 def test_unknown_prefix_rejected(client, valid_payload):
     valid_payload["values"]["Q:bogus"] = [1.0, 2.0, 3.0]
-    assert client.post("/predict", json=valid_payload).status_code == 422
+    assert client.post("/predict", json=valid_payload).status_code == 400
 
 
 # ---------------------------------------------------------------------------
