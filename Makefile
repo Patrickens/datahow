@@ -15,17 +15,17 @@ help:
 	@echo "Dev:         make test   make lint   make format   make check"
 
 # --- Modelling ---------------------------------------------------------------
-# Rebuild the deployable best models via both sweeps. The best models are
-# committed, so this is normally a no-op; pass FORCE=1 to retrain.
+# Rebuild the deployable best models via the sweeps. Each model is trained ONLY
+# if its committed artifact is absent (or FORCE=1) — a present model is reused.
 models:
-	@if [ "$(FORCE)" = "1" ] || [ ! -f artifacts/xgb_best.joblib ] || [ ! -f artifacts/cde_best.eqx ]; then \
+	@if [ "$(FORCE)" = "1" ] || [ ! -f artifacts/xgb_best.joblib ]; then \
 		echo ">> XGBoost sweep"; \
 		uv run titer-sweep --model-kind xgb --data $(DATA) --targets $(TARGETS); \
+	else echo "artifacts/xgb_best.joblib present — reusing (FORCE=1 to retrain)"; fi
+	@if [ "$(FORCE)" = "1" ] || [ ! -f artifacts/cde_best.eqx ]; then \
 		echo ">> neural CDE sweep"; \
 		uv run titer-sweep --model-kind cde --data $(DATA) --targets $(TARGETS); \
-	else \
-		echo "best models present (use 'make models FORCE=1' to retrain)"; \
-	fi
+	else echo "artifacts/cde_best.eqx present — reusing (FORCE=1 to retrain)"; fi
 
 # Regenerate the figures the notebook/README use. FORCE=1 also refreshes caches.
 figures:
