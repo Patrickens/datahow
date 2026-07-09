@@ -90,8 +90,17 @@ def _predict(port: int, payload: dict) -> int:
 def _run_container(name: str, port: int, *extra: str) -> None:
     _run("docker", "rm", "-f", name, timeout=60)
     result = _run(
-        "docker", "run", "-d", "--name", name, "-p", f"{port}:8000",
-        "-e", "MODEL_PATH=/app/artifacts/xgb_best.joblib", *extra, IMAGE,
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "-p",
+        f"{port}:8000",
+        "-e",
+        "MODEL_PATH=/app/artifacts/xgb_best.joblib",
+        *extra,
+        IMAGE,
         timeout=120,
     )
     assert result.returncode == 0, f"docker run failed: {result.stderr}"

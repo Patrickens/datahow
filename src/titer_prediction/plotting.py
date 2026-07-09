@@ -395,9 +395,7 @@ def plot_cde_toy_state():
     return fig
 
 
-def cde_training_history(
-    epochs: int | None = None, regenerate: bool = False
-) -> pd.DataFrame:
+def cde_training_history(epochs: int | None = None, regenerate: bool = False) -> pd.DataFrame:
     """Per-epoch training history for the selected neural CDE config.
 
     Cached to ``artifacts/cde_training_history.csv`` so the notebook / HTML export

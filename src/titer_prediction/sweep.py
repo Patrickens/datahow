@@ -77,16 +77,12 @@ def _sample_grid(grid: dict[str, list], n_configs: int, seed: int) -> list[dict[
     return [dict(zip(keys, all_configs[int(idx)], strict=True)) for idx in chosen]
 
 
-def sample_cde_configs(
-    n_configs: int = CDE_N_CONFIGS, seed: int = SEED
-) -> list[dict[str, Any]]:
+def sample_cde_configs(n_configs: int = CDE_N_CONFIGS, seed: int = SEED) -> list[dict[str, Any]]:
     """Deterministically sample the CDE sweep configs."""
     return _sample_grid(CDE_SWEEP_GRID, n_configs, seed)
 
 
-def sample_xgb_configs(
-    n_configs: int = XGB_N_CONFIGS, seed: int = SEED
-) -> list[dict[str, Any]]:
+def sample_xgb_configs(n_configs: int = XGB_N_CONFIGS, seed: int = SEED) -> list[dict[str, Any]]:
     """Deterministically sample the XGBoost sweep configs."""
     return _sample_grid(XGB_SWEEP_GRID, n_configs, seed)
 
