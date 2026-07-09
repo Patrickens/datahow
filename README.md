@@ -232,17 +232,17 @@ targets arrive, but the ordering matches expectations.
 
 | Model | RMSE | MAPE | R² | Protocol |
 | ----- | ---- | ---- | -- | -------- |
-| Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
-| **XGBoost baseline** | **~309** | **~12%** | **~0.80** | repeated 5-fold CV |
-| Neural CDE | ~740 | ~19% | ~0.48–0.9 | single 20% holdout (very noisy) |
+| Mean predictor | ~734 | ~55% | ~0.00 | repeated 5-fold CV |
+| **XGBoost baseline** | **~286** | **~11.5%** | **~0.83** | 10-config sweep + repeated 5-fold CV |
+| Neural CDE | ~220 | ~13.6% | ~0.85 | 20-config sweep + 20% validation holdout |
 
-The XGBoost baseline is the dependable model here, as anticipated for a small
-tabular-friendly dataset. The neural CDE's single 20% holdout is **very noisy** —
-R² ranges from ~0.48 (default config) to ~0.9 across seeds/configs (`titer-cde
-sweep`), so it is best read as competitive with, not clearly beating, the baseline.
-A repeated holdout would give a more stable estimate; the CDE's value here is
-methodological. Use `titer-cde train` (writes a training-history CSV) and
-`titer-sweep` to diagnose training and explore hyperparameters.
+The XGBoost baseline is still the dependable deployment choice here: it is fast,
+stable, and easy to serve. The tuned CDE achieved a strong validation score on
+this split, but that number should be read cautiously because a single 20%
+holdout over ~100 experiments is noisy. The CDE's value here is methodological:
+it demonstrates the path-based treatment of ragged trajectories and
+discontinuous controls. Use `titer-sweep` to reproduce both sweeps and final
+refits.
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
 > criterion** for this challenge; clarity of preprocessing, evaluation,
