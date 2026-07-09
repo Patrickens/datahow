@@ -56,3 +56,6 @@ claude_*.txt
 !artifacts/cde_best_metadata.json
 !artifacts/feature_importance.csv
 !artifacts/cde_training_history.csv
+# Sweep result tables (small; the notebook renders its top-config tables from them)
+!artifacts/xgb_sweep_results.csv
+!artifacts/cde_sweep_results.csv

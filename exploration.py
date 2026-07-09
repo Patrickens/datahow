@@ -549,7 +549,7 @@ def _(mo):
     ### Best XGBoost: out-of-fold predictions
 
     Predicted-vs-actual (left) hugs the diagonal for most runs — the selected
-    sweep configuration reaches repeated-CV **R² ≈ 0.83**, far above the mean
+    sweep configuration reaches repeated-CV **R² ≈ 0.84**, far above the mean
     predictor (~0). The model poorly predicts the high-titer regime, which is
     unfortunate because these are exactly the most interesting experiments from a
     process-optimization perspective.
@@ -580,13 +580,13 @@ def _(mo):
     The gain-based importances are a reassuring sanity check — and a vindication of the
     feature-engineering choice. The top features are all **biologically meaningful**. Leading
     the table is the **AUC of estimated total cell density** (`bio_total_cell_density_auc`,
-    our custom cell-population feature), followed by the **apparent glutamine and glucose
-    consumed** (feed-accounting) and the **area under the VCD curve**
-    (`tsfel_X:VCD_Area under the curve`, essentially the **integral of viable cells** — the
-    classical mechanistic predictor of product). The rest are substrate/byproduct AUCs,
-    levels, and feed summaries. This is exactly the kind of feature catch22 could **not**
-    provide — its top-ranked features were abstract dynamical descriptors, whereas here the
-    model leans on quantities a process scientist would reach for.
+    our custom cell-population feature) and the **apparent glutamine consumed**
+    (feed-accounting), followed by VCD shape/level descriptors (centroid, median, and the
+    **area under the VCD curve** — essentially the **integral of viable cells**, the classical
+    mechanistic predictor of product) and the lysed-fraction signal. The rest are
+    substrate/byproduct AUCs, levels, and feed summaries. This is exactly the kind of feature
+    catch22 could **not** provide — its top-ranked features were abstract dynamical
+    descriptors, whereas here the model leans on quantities a process scientist would reach for.
     """)
     return
 
@@ -999,7 +999,7 @@ def _(mo):
     ### Takeaways
 
     - Clean, interpretable feature engineering plus a well-regularised,
-      honestly-benchmarked baseline reaches **R² ≈ 0.83**.
+      honestly-benchmarked baseline reaches **R² ≈ 0.84**.
     - The neural CDE demonstrates the path-based methodology; **hybrid mechanistic
       models** are the interpretable, data-efficient destination.
     - Performance was never the point of this challenge — clarity of the pipeline and of

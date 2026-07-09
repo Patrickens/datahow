@@ -216,21 +216,21 @@ Top 15 features by XGBoost gain (from `artifacts/feature_importance.csv`):
 
 | Feature | Importance |
 | ------- | ---------- |
-| Total cell density AUC | 0.185 |
-| Gln apparent consumed | 0.113 |
-| VCD area under the curve | 0.087 |
-| Glc apparent consumed | 0.075 |
-| VCD centroid | 0.049 |
-| Lysed area under the curve | 0.046 |
-| Lysed signal distance | 0.045 |
-| Gln signal distance | 0.038 |
-| VCD median | 0.028 |
-| Lac signal distance | 0.025 |
-| Lysed mean diff | 0.024 |
-| Lysed absolute energy | 0.023 |
-| Glc total fed | 0.019 |
-| Lysed root mean square | 0.017 |
-| Amm standard deviation | 0.016 |
+| Total cell density AUC | 0.152 |
+| Gln apparent consumed | 0.133 |
+| VCD centroid | 0.093 |
+| Lysed signal distance | 0.072 |
+| VCD area under the curve | 0.060 |
+| Gln signal distance | 0.047 |
+| Glc total fed | 0.042 |
+| VCD median | 0.040 |
+| Lac signal distance | 0.033 |
+| Amm max | 0.022 |
+| Glc apparent consumed | 0.021 |
+| Lac area under the curve | 0.019 |
+| Amm absolute energy | 0.019 |
+| Glc initial plus fed | 0.018 |
+| Lysed mean diff | 0.017 |
 
 ## Results (cross-validated / held-out)
 
@@ -240,16 +240,17 @@ targets arrive, but the ordering matches expectations.
 
 | Model | RMSE | MAPE | R² | Protocol |
 | ----- | ---- | ---- | -- | -------- |
-| Mean predictor | ~734 | ~55% | ~0.00 | repeated 5-fold CV |
-| **XGBoost baseline** | **~286** | **~11.5%** | **~0.83** | 10-config sweep + repeated 5-fold CV |
-| Neural CDE | ~220 | ~13.6% | ~0.85 | 10-config sweep + 20% validation holdout |
+| Mean predictor | ~730 | ~55% | ~0.00 | repeated 5-fold CV |
+| **XGBoost baseline** | **~280** | **~11.5%** | **~0.85** | 10-config sweep + repeated 5-fold CV |
+| Neural CDE | ~459 | ~15.7% | ~0.80 | 10-config sweep + 20% validation holdout |
 
-The XGBoost baseline is still the dependable deployment choice here: it is fast,
-stable, and easy to serve. The tuned CDE achieved a strong validation score on
-this split, but that number should be read cautiously because a single 20%
-holdout over ~100 experiments is noisy. The CDE's value here is methodological:
-it demonstrates the path-based treatment of ragged trajectories and
-discontinuous controls. Run `make models FORCE=1` to reproduce both sweeps and
+The XGBoost baseline is the dependable deployment choice here: fast, stable, easy
+to serve, and — on this data — the stronger model. The CDE's single-holdout score
+is both lower and noisier (a 20% holdout over ~100 experiments swings a lot with
+the split), which is exactly why the baseline is benchmarked with **repeated**
+CV. The CDE's value here is methodological: it demonstrates the path-based
+treatment of ragged trajectories and discontinuous controls, and is where we'd
+invest with more data. Run `make models FORCE=1` to reproduce both sweeps and
 final refits (single `seed=0`).
 
 > **Note on evaluation.** Model **performance is explicitly not the primary
