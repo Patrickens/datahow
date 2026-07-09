@@ -15,9 +15,13 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
-    import marimo as mo
+    import json
+    from pathlib import Path
 
-    return (mo,)
+    import marimo as mo
+    import pandas as pd
+
+    return Path, json, mo, pd
 
 
 @app.cell
@@ -470,11 +474,8 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    import json as _json
-    from pathlib import Path as _Path
-
-    _metadata = _json.loads(_Path("artifacts/xgb_best_metadata.json").read_text())
+def _(Path, json, mo):
+    _metadata = json.loads(Path("artifacts/xgb_best_metadata.json").read_text())
 
     mo.md(
         f"""
@@ -490,10 +491,8 @@ def _(mo):
 
 
 @app.cell
-def _():
-    import pandas as _pd
-
-    _xgb_sweep = _pd.read_csv("artifacts/xgb_sweep_results.csv")
+def _(pd):
+    _xgb_sweep = pd.read_csv("artifacts/xgb_sweep_results.csv")
     _xgb_sweep_display = (
         _xgb_sweep.sort_values("xgb_r2", ascending=False)
         .head(5)
@@ -520,11 +519,8 @@ def _():
 
 
 @app.cell
-def _(mo):
-    import json as _json
-    from pathlib import Path as _Path
-
-    _metadata = _json.loads(_Path("artifacts/xgb_best_metadata.json").read_text())
+def _(Path, json, mo):
+    _metadata = json.loads(Path("artifacts/xgb_best_metadata.json").read_text())
     _best = _metadata["best_validation"]
     _final_cv = _metadata["final_cv"]["xgboost"]
     _baseline = _metadata["final_cv"]["baseline_mean"]
@@ -889,11 +885,8 @@ def _(plotting):
 
 
 @app.cell
-def _(mo):
-    import json as _json
-    from pathlib import Path as _Path
-
-    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
+def _(Path, json, mo):
+    _metadata = json.loads(Path("artifacts/cde_best_metadata.json").read_text())
 
     mo.md(
         f"""
@@ -909,10 +902,8 @@ def _(mo):
 
 
 @app.cell
-def _():
-    import pandas as _pd
-
-    _cde_sweep = _pd.read_csv("artifacts/cde_sweep_results.csv")
+def _(pd):
+    _cde_sweep = pd.read_csv("artifacts/cde_sweep_results.csv")
     _cde_sweep_display = (
         _cde_sweep.sort_values("val_r2", ascending=False)
         .head(5)
@@ -937,11 +928,8 @@ def _():
 
 
 @app.cell
-def _(mo):
-    import json as _json
-    from pathlib import Path as _Path
-
-    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
+def _(Path, json, mo):
+    _metadata = json.loads(Path("artifacts/cde_best_metadata.json").read_text())
     _best = _metadata["best_validation"]
     _cfg = _metadata["best_config"]
 
@@ -956,11 +944,8 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    import json as _json
-    from pathlib import Path as _Path
-
-    _metadata = _json.loads(_Path("artifacts/cde_best_metadata.json").read_text())
+def _(Path, json, mo):
+    _metadata = json.loads(Path("artifacts/cde_best_metadata.json").read_text())
     _best = _metadata["best_validation"]
 
     mo.md(
