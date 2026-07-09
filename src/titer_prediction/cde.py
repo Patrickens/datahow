@@ -385,6 +385,7 @@ def train(
         ys_tr = jnp.asarray(ys_np[train_indices])
         static_tr = jnp.asarray(static_np[train_indices])
         y_tr = jnp.asarray(y_np[train_indices])
+        raw_tr = raw_titer[train_indices]
 
         has_val = val_indices is not None and len(val_indices) > 0
         if has_val:
@@ -410,6 +411,13 @@ def train(
             model, opt_state, loss = step(model, opt_state)
             if epoch % every == 0 or epoch == epochs - 1:
                 record = {"epoch": epoch, "train_mse": float(loss)}
+                train_pred_std = np.asarray(_predict_batch(model, ys_tr, static_tr))
+                train_metrics = _metrics(raw_tr, standardizer.denorm_target(train_pred_std))
+                record.update(
+                    train_rmse=train_metrics["rmse"],
+                    train_mae=train_metrics["mae"],
+                    train_r2=train_metrics["r2"],
+                )
                 if has_val:
                     val_pred_std = np.asarray(_predict_batch(model, ys_va, static_va))
                     record["val_mse"] = float(np.mean((val_pred_std - y_va) ** 2))

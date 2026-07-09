@@ -74,6 +74,21 @@ def _best_xgb_refit_params() -> dict:
     return dict(_load_json(XGB_BEST_METADATA)["refit_params"])
 
 
+def _pretty_feature_label(name: str) -> str:
+    """Readable labels for feature-importance plots."""
+    label = name
+    replacements = {
+        "bio_total_cell_density_": "Total cell density ",
+        "bio_X:Glc_": "Glc ",
+        "bio_X:Gln_": "Gln ",
+        "tsfel_X:": "",
+        "gompertz_X:": "Gompertz ",
+    }
+    for old, new in replacements.items():
+        label = label.replace(old, new)
+    return label.replace("_", " ")
+
+
 # ---------------------------------------------------------------------------
 # 0. Target distribution
 # ---------------------------------------------------------------------------
@@ -284,9 +299,10 @@ def plot_feature_importance(
     model.fit(X, y)
     importances = pd.Series(model.regressor_.feature_importances_, index=X.columns)
     top_feats = importances.sort_values(ascending=False).head(top).iloc[::-1]
+    labels = [_pretty_feature_label(name) for name in top_feats.index]
 
     fig, ax = plt.subplots(figsize=(9, 6), constrained_layout=True)
-    ax.barh(top_feats.index, top_feats.to_numpy(), color="#4c72b0")
+    ax.barh(labels, top_feats.to_numpy(), color="#4c72b0")
     ax.set(xlabel="Importance (gain)", title=f"Top {top} baseline features")
     ax.tick_params(axis="y", labelsize=8)
     return fig
@@ -391,7 +407,7 @@ def plot_cde_toy_state():
 
 
 def plot_cde_training_curves(epochs: int | None = None):
-    """Train the selected neural CDE config and plot its learning curves."""
+    """Train the selected neural CDE config and plot raw-RMSE learning curves."""
     from . import cde  # lazy: only this illustration pulls in the JAX stack
 
     metadata = _load_json(CDE_BEST_METADATA)
@@ -412,22 +428,53 @@ def plot_cde_training_curves(epochs: int | None = None):
         refit_all=False,
     )
     hist = pd.DataFrame(history)
+    plot_hist = hist[hist["epoch"] > 0].copy()
 
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
-    ax.plot(hist["epoch"], hist["train_mse"], "-o", ms=3, color="#1f77b4", label="train MSE")
-    if "val_mse" in hist:
-        ax.plot(hist["epoch"], hist["val_mse"], "-o", ms=3, color="#d62728", label="val MSE")
+    ax.plot(
+        plot_hist["epoch"],
+        plot_hist["train_rmse"],
+        "-o",
+        ms=3,
+        color="#1f77b4",
+        label="train RMSE",
+    )
+    if "val_rmse" in plot_hist:
+        ax.plot(
+            plot_hist["epoch"],
+            plot_hist["val_rmse"],
+            "-o",
+            ms=3,
+            color="#d62728",
+            label="validation RMSE",
+        )
+    # Log scale keeps the early high-RMSE epochs from flattening the tail.
+    ax.set_yscale("log")
     ax.set(
         xlabel="epoch",
-        ylabel="MSE (standardised log-titer)",
-        title=f"Best neural CDE training curves ({epochs} epochs)",
+        ylabel="RMSE (titer units, log scale)",
+        title=f"Best neural CDE learning curves ({epochs} epochs; epoch 0 omitted)",
     )
-    ax.legend(loc="upper right", fontsize=9)
-    if "val_r2" in hist:
+
+    lines = ax.get_lines()
+    if "val_r2" in plot_hist:
         ax2 = ax.twinx()
-        ax2.plot(hist["epoch"], hist["val_r2"], "--", lw=1.2, color="#2ca02c", label="val R²")
-        ax2.set_ylabel("validation R² (titer units)")
-        ax2.legend(loc="lower right", fontsize=9)
+        ax2.plot(
+            plot_hist["epoch"],
+            plot_hist["val_r2"],
+            "-s",
+            ms=3,
+            color="#2ca02c",
+            label="validation R² (mAb titer)",
+        )
+        ax2.set_ylabel("validation R²  (mAb titer)", color="#2ca02c")
+        ax2.tick_params(axis="y", labelcolor="#2ca02c")
+        ax2.set_ylim(-0.05, 1.0)
+        ax2.axhline(0.0, color="#2ca02c", lw=0.8, ls=":", alpha=0.5)
+        lines = lines + ax2.get_lines()
+
+    lines = [ln for ln in lines if not ln.get_label().startswith("_")]
+    ax.legend(lines, [ln.get_label() for ln in lines], loc="center right", fontsize=9)
     return fig
 
 

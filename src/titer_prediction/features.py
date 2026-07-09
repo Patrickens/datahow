@@ -19,6 +19,8 @@ combining three complementary views of each variable-length trajectory:
 4. **Substrate feed-accounting features** — small, biologically motivated
    summaries for the fed substrates glucose and glutamine: initial/final level,
    total feed integral, initial plus fed amount, and apparent amount consumed.
+5. **Cell-population accounting features** — estimated total cell density from
+   viable cell density and lysed fraction.
 
 On the feature-library choice: we considered **tsfresh** but it conflicts with
 the JAX/diffrax stack (its numba/stumpy dependency pins an incompatible numpy)
@@ -53,6 +55,7 @@ MATCHING_FEEDS: dict[str, str] = {
     "X:Glc": "W:FeedGlc",
     "X:Gln": "W:FeedGln",
 }
+TOTAL_CELL_FEATURE_PREFIX = "bio_total_cell_density"
 
 _MIN_POINTS_FOR_FIT = len(GOMPERTZ_PARAMS) + 1
 
@@ -353,6 +356,54 @@ def substrate_consumption_features(
     return out
 
 
+def _total_cell_density(vcd: np.ndarray, lysed_fraction: np.ndarray) -> np.ndarray:
+    """Estimate total cell density from viable density and lysed fraction."""
+    vcd = np.asarray(vcd, dtype=float)
+    lysed_fraction = np.asarray(lysed_fraction, dtype=float)
+    valid = np.isfinite(vcd) & np.isfinite(lysed_fraction) & (lysed_fraction >= 0.0)
+    valid &= lysed_fraction < 1.0
+
+    total = np.full_like(vcd, np.nan, dtype=float)
+    total[valid] = vcd[valid] / (1.0 - lysed_fraction[valid])
+    return total
+
+
+def cell_density_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Cell-population features derived from VCD and lysed fraction.
+
+    If ``X:Lysed`` is interpreted as the fraction of total cells that have lysed,
+    then ``X:VCD`` is the viable fraction of the total population:
+
+    ``total_cell_density = X:VCD / (1 - X:Lysed)``.
+    """
+    rows: dict[str, dict[str, float]] = {}
+    for exp, group in df.groupby(schema.EXP_COL, sort=False):
+        group = group.sort_values(schema.TIME_COL)
+        feat: dict[str, float] = {}
+        if "X:VCD" in group.columns and "X:Lysed" in group.columns:
+            time = group[schema.TIME_COL].to_numpy(dtype=float)
+            total = _total_cell_density(
+                group["X:VCD"].to_numpy(dtype=float),
+                group["X:Lysed"].to_numpy(dtype=float),
+            )
+            finite = np.isfinite(total)
+            if finite.any():
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_initial"] = float(total[0])
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_final"] = float(total[-1])
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_max"] = float(np.nanmax(total))
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_auc"] = _auc(time, total)
+            else:
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_initial"] = np.nan
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_final"] = np.nan
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_max"] = np.nan
+                feat[f"{TOTAL_CELL_FEATURE_PREFIX}_auc"] = np.nan
+        rows[exp] = feat
+
+    out = pd.DataFrame.from_dict(rows, orient="index")
+    out.index.name = schema.EXP_COL
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
@@ -364,8 +415,9 @@ def build_baseline_features(
     tsfel_feats = tsfel_features(df, tsfel_channels)
     gompertz = gompertz_features(df, GOMPERTZ_VCD_CHANNEL)
     bio = substrate_consumption_features(df)
+    cells = cell_density_features(df)
 
-    features = pd.concat([static, tsfel_feats, gompertz, bio], axis=1)
+    features = pd.concat([static, tsfel_feats, gompertz, bio, cells], axis=1)
     features.index.name = schema.EXP_COL
     return features
 

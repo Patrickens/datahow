@@ -189,15 +189,17 @@ def _(mo):
     ## 3. Feature engineering: from trajectories to features
 
     A generic regressor needs a **fixed-length feature vector** per experiment. We
-    collapse each variable-length trajectory four complementary ways:
+    collapse each variable-length trajectory five complementary ways:
 
     1. **Gompertz growth-curve parameters** (this section) — fit to VCD,
     2. **Substrate/feed-consumption features** — initial/final concentrations, total
        feed integral for glucose/glutamine, initial plus fed amount, and apparent
        consumed amount,
-    3. **TSFEL features** — a curated, interpretable set of statistical & temporal
+    3. **Cell-population accounting features** — estimated total cell density from
+       viable density and lysed fraction,
+    4. **TSFEL features** — a curated, interpretable set of statistical & temporal
        features per state channel (including the **area under the curve**),
-    4. **static + meta** — the pass-through `Z:` design scalars plus the observed
+    5. **static + meta** — the pass-through `Z:` design scalars plus the observed
        duration and number of timepoints.
 
     ### Gompertz fits on VCD
@@ -233,45 +235,39 @@ def _(mo):
 
     How to turn each channel into features automatically? We iterated:
 
-    - **tsfresh** — the obvious first choice, but it **conflicts with our JAX/diffrax
-      stack** (its `numba`/`stumpy` dependency pins a numpy that JAX won't accept) and
-      emits **200+ features**, more than helps on ~100 samples.
-    - **catch22** — 22 canonical *dynamical-systems* features. It actually worked well
-      here (baseline **R² ≈ 0.82**, and several of its features ranked highly). But the
-      features are generic time-series descriptors, not **domain-meaningful** for a
-      bioprocess — crucially there is **no area-under-the-curve**, and the integral of
-      viable cells (∫VCD) is one of the most physically motivated titer predictors.
-    - **TSFEL** — the compromise we adopted: `numba`-free (one environment),
-      **interpretable** statistical & temporal features that *include* AUC, and
-      **extensible**, which lets us fold Gompertz in as a custom feature.
+    - **tsfresh** — **conflicts with our JAX/diffrax stack** (its `numba`/`stumpy`
+      dependency pins a numpy JAX won't accept) and emits **200+ features**, more than
+      helps on ~100 samples.
+    - **catch22** — 22 canonical *dynamical-systems* features. Worked well (baseline
+      **R² ≈ 0.82**), but they are generic descriptors, not **domain-meaningful** — no
+      area-under-the-curve, and ∫VCD is one of the most physically motivated titer
+      predictors.
+    - **TSFEL** — the one we adopted: `numba`-free, **interpretable** statistical &
+      temporal features that *include* AUC, and **extensible** so we can fold in custom
+      features.
 
-    We keep a curated subset of TSFEL's **statistical** and **temporal** domains
-    (~25 features per `X:` channel; spectral/fractal dropped — little signal on
-    ~10-point series and harder to read). What they measure:
+    **Curated TSFEL subset** (~25 features per `X:` channel; spectral/fractal dropped —
+    little signal on ~10-point series):
 
-    **Level & spread (statistical)** — `Mean`, `Median`, `Max`, `Min`, `Standard
-    deviation`, `Variance`, `Root mean square`, `Interquartile range`, `Mean absolute
-    deviation`, `Peak to peak distance`.
+    - *Level & spread* — `Mean`, `Median`, `Max`, `Min`, `Standard deviation`,
+      `Variance`, `Root mean square`, `Interquartile range`, `Mean absolute deviation`,
+      `Peak to peak distance`.
+    - *Value distribution* — `Skewness`, `Kurtosis`, `Entropy`, `Absolute energy`.
+    - *Accumulation & trend* — `Area under the curve` (∫ over time, e.g. ∫VCD), `Slope`,
+      `Centroid`, `Mean diff`, `Mean absolute diff`.
+    - *Trajectory shape* — `Autocorrelation`, `Positive turning points`, `Negative
+      turning points`, `Zero crossing rate`, `Neighbourhood peaks`, `Signal distance`.
 
-    **Shape of the value distribution** — `Skewness`, `Kurtosis`, `Entropy`,
-    `Absolute energy`.
+    **Custom features** (registered with `@set_domain`, so they live in the same
+    pipeline):
 
-    **Accumulation & trend (temporal)** — `Area under the curve` (∫ over time — e.g. the
-    integral of viable cells), `Slope`, `Centroid`, `Mean diff`, `Mean absolute diff`.
-
-    **Shape of the trajectory in time** — `Autocorrelation`, `Positive turning points`,
-    `Negative turning points`, `Zero crossing rate`, `Neighbourhood peaks`, `Signal
-    distance`.
-
-    **Gompertz as a personalised TSFEL feature.** Because TSFEL is extensible, we
-    register the Gompertz parameters as **custom features** (decorated with
-    `@set_domain`) and apply them to VCD — so the growth-curve summary lives inside the
-    same feature pipeline as everything else.
-
-    **Substrate/feed accounting.** We also add targeted custom features for glucose
-    and glutamine: initial/final concentration, total feed integral (`W:FeedGlc`,
-    `W:FeedGln`), initial plus fed amount, and apparent consumed amount. TSFEL already
-    provides concentration AUCs for the `X:` channels, so we do not duplicate those here.
+    - *Gompertz* — the fitted growth-curve parameters, applied to VCD.
+    - *Substrate/feed* — for glucose and glutamine: initial/final concentration, total
+      feed integral (`W:FeedGlc`, `W:FeedGln`), initial-plus-fed, and apparent consumed
+      amount. (Concentration AUCs already come from TSFEL, so not duplicated.)
+    - *Cell-population* — from viable cells `X:VCD` and lysed fraction `X:Lysed`, the
+      derived total density $\mathrm{total}(t)=\mathrm{VCD}(t)/(1-\mathrm{Lysed}(t))$,
+      summarised by initial, final, max, and AUC.
     """)
     return
 
@@ -336,13 +332,13 @@ def _(mo):
     w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda}
     $$
 
-    $$
-    \mathrm{gain} = \frac{1}{2}\left[
-    \frac{G_L^2}{H_L+\lambda}
-    + \frac{G_R^2}{H_R+\lambda}
-    - \frac{(G_L+G_R)^2}{H_L+H_R+\lambda}
-    \right] - \gamma
-    $$
+    ```text
+    gain = 0.5 * (
+        G_L^2 / (H_L + lambda)
+        + G_R^2 / (H_R + lambda)
+        - (G_L + G_R)^2 / (H_L + H_R + lambda)
+    ) - gamma
+    ```
 
     Trees are grown greedily by maximising that gain. With our **squared-error** loss on
     $u=\log(1+y)$ the statistics are simply $g_i = \hat{u}_i - u_i$ and $h_i = 1$.
@@ -736,11 +732,10 @@ def _(mo):
     ### Training curves
 
     Because the CDE is trained by gradient descent (unlike the closed-form baseline), we
-    track **train and validation MSE** (standardised log-titer) and the **validation R²**
-    over epochs. The curves are the honest way to diagnose whether the model is
-    *undertrained* (both still falling), *overfitting* (train keeps dropping while val
-    turns up), or *unstable* (jagged, exploding — usually the learning rate). This plot
-    trains a short run inline.
+    track **train and validation RMSE in raw titer units** over epochs. That is easier
+    to interpret than standardised log-space MSE. The untrained epoch-0 checkpoint is
+    omitted because random log-space predictions can explode after `expm1` and dominate
+    the plot scale; the remaining checkpoints show the actual optimisation trajectory.
     """)
     return
 

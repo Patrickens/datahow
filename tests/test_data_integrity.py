@@ -149,6 +149,26 @@ def test_substrate_consumption_features_add_feed_accounting_only():
     assert not any(col.startswith("bio_X:Lac") for col in features.columns)
 
 
+def test_cell_density_features_estimate_total_cells_from_vcd_and_lysed_fraction():
+    df = pd.DataFrame(
+        {
+            "Exp": ["A", "A", "A"],
+            "Time[day]": [0.0, 1.0, 2.0],
+            "X:VCD": [10.0, 8.0, 5.0],
+            "X:Lysed": [0.0, 0.2, 0.5],
+        }
+    )
+
+    features = feats.cell_density_features(df)
+    row = features.loc["A"]
+
+    # total = viable / (1 - lysed_fraction) -> [10, 10, 10]
+    assert row["bio_total_cell_density_initial"] == pytest.approx(10.0)
+    assert row["bio_total_cell_density_final"] == pytest.approx(10.0)
+    assert row["bio_total_cell_density_max"] == pytest.approx(10.0)
+    assert row["bio_total_cell_density_auc"] == pytest.approx(20.0)
+
+
 def _write_synthetic(synthetic_long, tmp_path):
     csv = tmp_path / "inputs.csv"
     synthetic_long.to_csv(csv, index=False)

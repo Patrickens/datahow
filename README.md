@@ -95,6 +95,9 @@ feature vector we combine:
   initial plus total fed, and apparent consumed amount. TSFEL already provides
   concentration AUCs for the `X:` channels, so the custom features avoid
   duplicating those.
+- **Cell-population accounting features.** From viable cell density and lysed
+  fraction we estimate total cell density as
+  `X:VCD / (1 - X:Lysed)`, then add initial/final, max, and AUC summaries.
 - Plus the pass-through `Z:` design scalars and observed duration / length.
 
 The XGBoost target is `log1p(titer)`. This helps with the right-skewed target and
