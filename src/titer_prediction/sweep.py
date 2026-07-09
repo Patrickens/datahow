@@ -24,16 +24,11 @@ from . import features as feats
 
 logger = logging.getLogger(__name__)
 
-CDE_SWEEP_SEED = 20260708
-CDE_SPLIT_SEED = 20260709
-CDE_REFIT_SEED = 20260710
-CDE_N_CONFIGS = 20
-CDE_MODEL_SEED_BASE = 2026070800
-XGB_SWEEP_SEED = 20260711
-XGB_CV_SEED = 20260712
-XGB_REFIT_SEED = 20260713
+# One seed for everything: config sampling, the train/val split, model init, CV,
+# and the final refit. Hardcoded default; the sweep functions/CLI take ``seed=``.
+SEED = 0
+CDE_N_CONFIGS = 10
 XGB_N_CONFIGS = 10
-XGB_ESTIMATOR_SEED_BASE = 2026071100
 
 # Bounded grid; exactly CDE_N_CONFIGS configurations are sampled from it.
 CDE_SWEEP_GRID: dict[str, list] = {
@@ -70,49 +65,30 @@ def _json_ready(value: Any) -> Any:
     return value
 
 
-def _sample_grid(
-    grid: dict[str, list],
-    n_configs: int,
-    sweep_seed: int,
-    model_seed_base: int,
-    seed_key: str = "model_seed",
-) -> list[dict[str, Any]]:
-    """Sample exactly ``n_configs`` configs without replacement."""
+def _sample_grid(grid: dict[str, list], n_configs: int, seed: int) -> list[dict[str, Any]]:
+    """Deterministically sample exactly ``n_configs`` hyperparameter configs."""
     keys = list(grid)
     all_configs = list(itertools.product(*grid.values()))
     if n_configs > len(all_configs):
         raise ValueError(f"Requested {n_configs} configs but grid has only {len(all_configs)}.")
 
-    rng = np.random.default_rng(sweep_seed)
+    rng = np.random.default_rng(seed)
     chosen = rng.choice(len(all_configs), size=n_configs, replace=False)
-    configs: list[dict[str, Any]] = []
-    for run_index, idx in enumerate(chosen, start=1):
-        cfg = dict(zip(keys, all_configs[int(idx)], strict=True))
-        cfg[seed_key] = model_seed_base + run_index
-        configs.append(cfg)
-    return configs
+    return [dict(zip(keys, all_configs[int(idx)], strict=True)) for idx in chosen]
 
 
 def sample_cde_configs(
-    n_configs: int = CDE_N_CONFIGS,
-    sweep_seed: int = CDE_SWEEP_SEED,
+    n_configs: int = CDE_N_CONFIGS, seed: int = SEED
 ) -> list[dict[str, Any]]:
     """Deterministically sample the CDE sweep configs."""
-    return _sample_grid(CDE_SWEEP_GRID, n_configs, sweep_seed, CDE_MODEL_SEED_BASE)
+    return _sample_grid(CDE_SWEEP_GRID, n_configs, seed)
 
 
 def sample_xgb_configs(
-    n_configs: int = XGB_N_CONFIGS,
-    sweep_seed: int = XGB_SWEEP_SEED,
+    n_configs: int = XGB_N_CONFIGS, seed: int = SEED
 ) -> list[dict[str, Any]]:
     """Deterministically sample the XGBoost sweep configs."""
-    return _sample_grid(
-        XGB_SWEEP_GRID,
-        n_configs,
-        sweep_seed,
-        XGB_ESTIMATOR_SEED_BASE,
-        seed_key="estimator_seed",
-    )
+    return _sample_grid(XGB_SWEEP_GRID, n_configs, seed)
 
 
 def sweep_cde(
@@ -122,9 +98,7 @@ def sweep_cde(
     model_path: str | Path = "artifacts/cde_best.eqx",
     metadata_path: str | Path = "artifacts/cde_best_metadata.json",
     n_configs: int = CDE_N_CONFIGS,
-    sweep_seed: int = CDE_SWEEP_SEED,
-    split_seed: int = CDE_SPLIT_SEED,
-    refit_seed: int = CDE_REFIT_SEED,
+    seed: int = SEED,
 ) -> pd.DataFrame:
     """Run the reproducible CDE sweep, then refit and save the best config.
 
@@ -132,7 +106,7 @@ def sweep_cde(
     results — config, final train MSE, and validation RMSE/MAE/MAPE/R2 — are
     written incrementally to ``out_path`` so a partial sweep is still usable.
     """
-    configs = sample_cde_configs(n_configs, sweep_seed)
+    configs = sample_cde_configs(n_configs, seed)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,17 +118,14 @@ def sweep_cde(
             data_path,
             targets_path,
             refit_all=False,
-            split_seed=split_seed,
-            refit_seed=refit_seed,
+            seed=seed,
             **cfg,
         )
         runtime_s = time.perf_counter() - started
         rows.append(
             {
                 "run_index": run_index,
-                "sweep_seed": sweep_seed,
-                "split_seed": split_seed,
-                "refit_seed": refit_seed,
+                "seed": seed,
                 **cfg,
                 "train_mse": history[-1]["train_mse"],
                 "val_mse": history[-1].get("val_mse", np.nan),
@@ -174,15 +145,13 @@ def sweep_cde(
         "width": int(best_row["width"]),
         "depth": int(best_row["depth"]),
     }
-    best_config["model_seed"] = int(best_row["model_seed"])
 
     logger.info("Refitting best CDE config on all data: %s", best_config)
     bundle, _, _ = cde.train(
         data_path,
         targets_path,
         refit_all=True,
-        split_seed=split_seed,
-        refit_seed=refit_seed,
+        seed=seed,
         **best_config,
     )
     metadata = {
@@ -190,12 +159,7 @@ def sweep_cde(
         "created_utc": datetime.now(UTC).isoformat(),
         "selection_metric": "val_r2",
         "n_configs": n_configs,
-        "seeds": {
-            "sweep_seed": sweep_seed,
-            "split_seed": split_seed,
-            "model_seed": best_config["model_seed"],
-            "refit_seed": refit_seed,
-        },
+        "seed": seed,
         "best_config": best_config,
         "best_validation": best_row,
         "sweep_results": str(out_path),
@@ -211,8 +175,9 @@ def sweep_cde(
     return results
 
 
-def _xgb_params(config: dict[str, Any], random_state: int) -> dict[str, Any]:
-    params = {
+def _xgb_params(config: dict[str, Any]) -> dict[str, Any]:
+    """Merge a sampled config onto the defaults (random_state is set by build_model)."""
+    return {
         **regression.DEFAULT_XGB_PARAMS,
         "max_depth": int(config["max_depth"]),
         "learning_rate": float(config["learning_rate"]),
@@ -221,9 +186,7 @@ def _xgb_params(config: dict[str, Any], random_state: int) -> dict[str, Any]:
         "colsample_bytree": float(config["colsample_bytree"]),
         "reg_lambda": float(config["reg_lambda"]),
         "min_child_weight": int(config["min_child_weight"]),
-        "random_state": int(random_state),
     }
-    return params
 
 
 def sweep_xgb(
@@ -233,24 +196,21 @@ def sweep_xgb(
     model_path: str | Path = "artifacts/xgb_best.joblib",
     metadata_path: str | Path = "artifacts/xgb_best_metadata.json",
     n_configs: int = XGB_N_CONFIGS,
-    sweep_seed: int = XGB_SWEEP_SEED,
-    cv_seed: int = XGB_CV_SEED,
-    refit_seed: int = XGB_REFIT_SEED,
+    seed: int = SEED,
 ) -> pd.DataFrame:
     """Run the reproducible XGBoost sweep, then refit and save the best config."""
     dataset = feats.build_baseline_dataset(data_path, targets_path)
     X, y = dataset.features, dataset.targets
-    configs = sample_xgb_configs(n_configs, sweep_seed)
+    configs = sample_xgb_configs(n_configs, seed)
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
     for run_index, cfg in enumerate(configs, start=1):
-        estimator_seed = int(cfg["estimator_seed"])
-        params = _xgb_params(cfg, random_state=estimator_seed)
+        params = _xgb_params(cfg)
         logger.info("xgb sweep %d/%d: %s", run_index, n_configs, cfg)
         started = time.perf_counter()
-        cv_results = regression.cross_validate(X, y, params=params, seed=cv_seed)
+        cv_results = regression.cross_validate(X, y, params=params, seed=seed)
         runtime_s = time.perf_counter() - started
 
         xgb_metrics = cv_results["xgboost"]
@@ -258,9 +218,7 @@ def sweep_xgb(
         rows.append(
             {
                 "run_index": run_index,
-                "sweep_seed": sweep_seed,
-                "cv_seed": cv_seed,
-                "refit_seed": refit_seed,
+                "seed": seed,
                 **cfg,
                 **{f"xgb_{k}": v for k, v in xgb_metrics.items()},
                 **{f"baseline_{k}": v for k, v in baseline_metrics.items()},
@@ -281,26 +239,21 @@ def sweep_xgb(
         "reg_lambda": float(best_row["reg_lambda"]),
         "min_child_weight": int(best_row["min_child_weight"]),
     }
-    refit_params = _xgb_params(best_config, random_state=refit_seed)
+    refit_params = _xgb_params(best_config)
 
     logger.info("Refitting best XGBoost config on all data: %s", refit_params)
     bundle, cv_results = regression.train(
         data_path,
         targets_path,
         params=refit_params,
-        seed=cv_seed,
+        seed=seed,
     )
     metadata = {
         "model_type": "xgboost",
         "created_utc": datetime.now(UTC).isoformat(),
         "selection_metric": "xgb_r2",
         "n_configs": n_configs,
-        "seeds": {
-            "sweep_seed": sweep_seed,
-            "cv_seed": cv_seed,
-            "selected_estimator_seed": int(best_row["estimator_seed"]),
-            "refit_seed": refit_seed,
-        },
+        "seed": seed,
         "best_config": best_config,
         "refit_params": refit_params,
         "best_validation": best_row,
@@ -328,10 +281,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None)
     parser.add_argument("--metadata", default=None)
     parser.add_argument("--n-configs", type=int, default=None)
-    parser.add_argument("--sweep-seed", type=int, default=None)
-    parser.add_argument("--split-seed", type=int, default=CDE_SPLIT_SEED)
-    parser.add_argument("--refit-seed", type=int, default=None)
-    parser.add_argument("--cv-seed", type=int, default=XGB_CV_SEED)
+    parser.add_argument("--seed", type=int, default=SEED)
     return parser
 
 
@@ -349,9 +299,7 @@ def main(argv: list[str] | None = None) -> int:
             model_path=args.model or "artifacts/cde_best.eqx",
             metadata_path=args.metadata or "artifacts/cde_best_metadata.json",
             n_configs=args.n_configs or CDE_N_CONFIGS,
-            sweep_seed=args.sweep_seed or CDE_SWEEP_SEED,
-            split_seed=args.split_seed,
-            refit_seed=args.refit_seed or CDE_REFIT_SEED,
+            seed=args.seed,
         )
     else:
         sweep_xgb(
@@ -361,9 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             model_path=args.model or "artifacts/xgb_best.joblib",
             metadata_path=args.metadata or "artifacts/xgb_best_metadata.json",
             n_configs=args.n_configs or XGB_N_CONFIGS,
-            sweep_seed=args.sweep_seed or XGB_SWEEP_SEED,
-            cv_seed=args.cv_seed,
-            refit_seed=args.refit_seed or XGB_REFIT_SEED,
+            seed=args.seed,
         )
     return 0
 

@@ -63,6 +63,10 @@ from . import schema
 
 logger = logging.getLogger(__name__)
 
+# Single seed for all randomness in this model (train/val split + both model
+# initialisations). Hardcoded default; ``train`` takes ``seed=`` to override it.
+SEED = 0
+
 
 # ---------------------------------------------------------------------------
 # Standardisation
@@ -333,15 +337,14 @@ def train(
     epochs: int = 300,
     lr: float = 3e-3,
     val_frac: float = 0.2,
-    split_seed: int = 0,
-    model_seed: int = 1,
-    refit_seed: int = 2,
+    seed: int = SEED,
     refit_all: bool = True,
 ) -> tuple[CDEBundle, dict[str, float], list[dict]]:
     """Train the neural CDE with a validation holdout, then refit on all data.
 
-    Set ``refit_all=False`` to skip the deploy-time refit (used by the sweep, which
-    only needs the holdout metrics).
+    A single ``seed`` drives all randomness — the train/validation split and both
+    model initialisations. Set ``refit_all=False`` to skip the deploy-time refit
+    (used by the sweep, which only needs the holdout metrics).
     """
     seq = dp.build_sequences(data_path, targets_path)
     standardizer = fit_standardizer(seq)
@@ -351,7 +354,7 @@ def train(
     n_w = sum(c.startswith(schema.CONTROL_PREFIX) for c in seq.channel_names)
 
     n = ys_np.shape[0]
-    rng = np.random.default_rng(split_seed)
+    rng = np.random.default_rng(seed)
     perm = rng.permutation(n)
     n_val = max(1, int(round(val_frac * n)))
     val_idx, train_idx = perm[:n_val], perm[n_val:]
@@ -363,9 +366,7 @@ def train(
         "epochs": epochs,
         "lr": lr,
         "val_frac": val_frac,
-        "split_seed": split_seed,
-        "model_seed": model_seed,
-        "refit_seed": refit_seed,
+        "seed": seed,
         "refit_all": refit_all,
         "n_channels": int(ys_np.shape[2]),
         "n_static": int(static_np.shape[1]),
@@ -433,8 +434,10 @@ def train(
                 )
         return model, history
 
-    k_val = jax.random.PRNGKey(model_seed)
-    k_full = jax.random.PRNGKey(refit_seed)
+    # One seed for both fits; they train on different data so identical init keys
+    # are fine and keep the randomness controlled by a single knob.
+    k_val = jax.random.PRNGKey(seed)
+    k_full = jax.random.PRNGKey(seed)
 
     # 1) Fit on the train split; report honest validation metrics and keep history.
     logger.info("Fitting holdout model (%d train / %d val)...", len(train_idx), n_val)
@@ -554,9 +557,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--epochs", type=int, default=300)
     p_train.add_argument("--lr", type=float, default=3e-3)
     p_train.add_argument("--val-frac", type=float, default=0.2)
-    p_train.add_argument("--split-seed", type=int, default=0)
-    p_train.add_argument("--model-seed", type=int, default=1)
-    p_train.add_argument("--refit-seed", type=int, default=2)
+    p_train.add_argument("--seed", type=int, default=SEED)
     p_train.add_argument(
         "--history",
         default=None,
@@ -581,9 +582,7 @@ def _run_train(args: argparse.Namespace) -> int:
         epochs=args.epochs,
         lr=args.lr,
         val_frac=args.val_frac,
-        split_seed=args.split_seed,
-        model_seed=args.model_seed,
-        refit_seed=args.refit_seed,
+        seed=args.seed,
     )
     save_bundle(bundle, args.model)
     history_path = args.history or Path(args.model).with_suffix(".history.csv")

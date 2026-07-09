@@ -480,10 +480,10 @@ def _(mo):
         f"""
         ### Small XGBoost sweep
 
-        I sampled **{_metadata["n_configs"]}** shallow-tree configurations with fixed
-        seeds (`sweep={_metadata["seeds"]["sweep_seed"]}`,
-        `cv={_metadata["seeds"]["cv_seed"]}`). The table below is sorted by validation
-        R² and shows the top configurations.
+        I sampled **{_metadata["n_configs"]}** shallow-tree configurations with a single
+        fixed `seed={_metadata["seed"]}` (config sampling, CV splits and the estimator all
+        derive from it). The table below is sorted by validation R² and shows the top
+        configurations.
         """
     )
     return
@@ -899,12 +899,10 @@ def _(mo):
         f"""
         ### Small CDE sweep
 
-        I sampled **{_metadata["n_configs"]}** CDE configurations with fixed seeds
-        (`sweep={_metadata["seeds"]["sweep_seed"]}`,
-        `split={_metadata["seeds"]["split_seed"]}`,
-        `refit={_metadata["seeds"]["refit_seed"]}`). Each run used an explicit
-        model-initialisation seed and the same fixed 20% validation holdout. The table
-        below is sorted by validation R² and shows the top configurations.
+        I sampled **{_metadata["n_configs"]}** CDE configurations with a single fixed
+        `seed={_metadata["seed"]}` (config sampling, the 20% validation split and model
+        initialisation all derive from it). The table below is sorted by validation R² and
+        shows the top configurations.
         """
     )
     return
@@ -927,7 +925,6 @@ def _():
                 "hidden_size",
                 "width",
                 "depth",
-                "model_seed",
                 "val_rmse",
                 "val_mape",
                 "val_r2",
@@ -952,8 +949,7 @@ def _(mo):
         f"""
         The best configuration was run **{int(_best["run_index"])}**:
         `epochs={_cfg["epochs"]}`, `lr={_cfg["lr"]}`, `hidden_size={_cfg["hidden_size"]}`,
-        `width={_cfg["width"]}`, `depth={_cfg["depth"]}`,
-        `model_seed={_cfg["model_seed"]}`.
+        `width={_cfg["width"]}`, `depth={_cfg["depth"]}`.
         """
     )
     return

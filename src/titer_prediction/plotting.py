@@ -67,7 +67,7 @@ def _load_json(path: Path) -> dict:
 def _best_xgb_cv_params() -> dict:
     metadata = _load_json(XGB_BEST_METADATA)
     params = dict(metadata["best_config"])
-    params["random_state"] = int(metadata["seeds"]["selected_estimator_seed"])
+    params["random_state"] = int(metadata["seed"])
     params["n_jobs"] = -1
     return params
 
@@ -249,7 +249,7 @@ def plot_cv_predictions(X: pd.DataFrame | None = None, y: pd.Series | None = Non
         reg.build_model(_best_xgb_cv_params()),
         X,
         y,
-        cv=KFold(5, shuffle=True, random_state=int(metadata["seeds"]["cv_seed"])),
+        cv=KFold(5, shuffle=True, random_state=int(metadata["seed"])),
     )
     resid = y.to_numpy() - oof
 
@@ -411,7 +411,6 @@ def cde_training_history(
 
     metadata = _load_json(CDE_BEST_METADATA)
     cfg = metadata["best_config"]
-    seeds = metadata["seeds"]
     epochs = int(cfg["epochs"] if epochs is None else epochs)
     _, _, history = cde.train(
         TRAIN_DATA,
@@ -421,9 +420,7 @@ def cde_training_history(
         depth=int(cfg["depth"]),
         epochs=epochs,
         lr=float(cfg["lr"]),
-        split_seed=int(seeds["split_seed"]),
-        model_seed=int(seeds["model_seed"]),
-        refit_seed=int(seeds["refit_seed"]),
+        seed=int(metadata["seed"]),
         refit_all=False,
     )
     hist = pd.DataFrame(history)

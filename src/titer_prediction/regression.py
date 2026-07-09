@@ -42,8 +42,13 @@ from . import schema
 
 logger = logging.getLogger(__name__)
 
+# Single seed for all randomness in this model (CV splits + the estimator's
+# own RNG). Hardcoded default; every entry point takes ``seed=`` to override it.
+SEED = 0
+
 # Shallow, regularised defaults: with ~100 experiments and ~170 features the
-# priority is variance control, not capacity.
+# priority is variance control, not capacity. ``random_state`` is injected from
+# the single seed by :func:`build_model`, so it is intentionally absent here.
 DEFAULT_XGB_PARAMS: dict = {
     "n_estimators": 300,
     "max_depth": 3,
@@ -52,7 +57,6 @@ DEFAULT_XGB_PARAMS: dict = {
     "colsample_bytree": 0.8,
     "reg_lambda": 1.0,
     "min_child_weight": 3,
-    "random_state": 0,
     "n_jobs": -1,
 }
 
@@ -84,9 +88,14 @@ class ModelBundle:
 # ---------------------------------------------------------------------------
 # Model construction
 # ---------------------------------------------------------------------------
-def build_model(params: dict | None = None) -> TransformedTargetRegressor:
-    """XGBoost regressor wrapped to train on log1p(titer)."""
-    regressor = XGBRegressor(**(params or DEFAULT_XGB_PARAMS))
+def build_model(params: dict | None = None, seed: int = SEED) -> TransformedTargetRegressor:
+    """XGBoost regressor wrapped to train on log1p(titer).
+
+    ``random_state`` is always set from the single ``seed`` (overriding any value
+    in ``params``) so a model's randomness is controlled by one knob.
+    """
+    xgb_params = {**(params or DEFAULT_XGB_PARAMS), "random_state": int(seed)}
+    regressor = XGBRegressor(**xgb_params)
     return TransformedTargetRegressor(regressor=regressor, func=np.log1p, inverse_func=np.expm1)
 
 
@@ -99,7 +108,7 @@ def cross_validate(
     params: dict | None = None,
     n_splits: int = 5,
     n_repeats: int = 5,
-    seed: int = 0,
+    seed: int = SEED,
 ) -> dict[str, dict[str, float]]:
     """Repeated K-fold CV for the model and a mean-predictor baseline.
 
@@ -109,7 +118,7 @@ def cross_validate(
     """
     cv = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
     estimators = {
-        "xgboost": build_model(params),
+        "xgboost": build_model(params, seed=seed),
         "baseline_mean": DummyRegressor(strategy="mean"),
     }
 
@@ -152,7 +161,7 @@ def train(
     params: dict | None = None,
     n_splits: int = 5,
     n_repeats: int = 5,
-    seed: int = 0,
+    seed: int = SEED,
 ) -> tuple[ModelBundle, dict[str, dict[str, float]]]:
     """Build features, cross-validate, and refit on all data into a bundle."""
     dataset = feats.build_baseline_dataset(data_path, targets_path)
@@ -162,7 +171,7 @@ def train(
     cv_results = cross_validate(X, y, params, n_splits, n_repeats, seed)
     _log_cv_results(cv_results)
 
-    model = build_model(params)
+    model = build_model(params, seed=seed)
     model.fit(X, y)
     bundle = ModelBundle(
         model=model,
@@ -173,6 +182,7 @@ def train(
             "n_train": int(X.shape[0]),
             "n_features": int(X.shape[1]),
             "cv": cv_results,
+            "seed": int(seed),
             "xgb_params": params or DEFAULT_XGB_PARAMS,
             "created_utc": datetime.now(UTC).isoformat(),
         },
@@ -225,7 +235,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--model", required=True, help="Output path for the bundle.")
     p_train.add_argument("--n-splits", type=int, default=5)
     p_train.add_argument("--n-repeats", type=int, default=5)
-    p_train.add_argument("--seed", type=int, default=0)
+    p_train.add_argument("--seed", type=int, default=SEED)
 
     p_pred = sub.add_parser("predict", help="Predict titer from a saved model.")
     p_pred.add_argument("--data", required=True)
