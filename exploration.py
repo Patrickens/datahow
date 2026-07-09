@@ -306,47 +306,165 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### The math (XGBoost, to refresh)
+    ### The math: what XGBoost is doing
 
-    Gradient boosting builds an **additive ensemble of regression trees**,
-
-    $$ \hat{y}_i = F(x_i) = \sum_{k=1}^{K} f_k(x_i), \qquad f_k \in \mathcal{F}\ \text{(CART trees)}, $$
-
-    fit **stage-wise**: at round $m$ we add one tree to the current model,
-    $F_m = F_{m-1} + \eta\, f_m$ (learning rate $\eta$), chosen to minimise a
-    *regularised* objective
-
-    $$ \mathcal{L}^{(m)} = \sum_i \ell\big(y_i,\ F_{m-1}(x_i) + f_m(x_i)\big) + \Omega(f_m),
-       \qquad \Omega(f) = \gamma T + \tfrac{1}{2}\lambda \lVert w \rVert^2, $$
-
-    where $T$ is the number of leaves and $w$ their weights. A **2nd-order Taylor**
-    expansion of the loss around $F_{m-1}$ gives
-
-    $$ \mathcal{L}^{(m)} \approx \sum_i \Big[ g_i\, f_m(x_i) + \tfrac{1}{2} h_i\, f_m(x_i)^2 \Big] + \Omega(f_m),
-       \qquad g_i = \partial_{\hat y}\,\ell,\ \ h_i = \partial^2_{\hat y}\,\ell. $$
-
-    For a fixed tree structure the optimal weight of leaf $j$ (with instance set $I_j$)
-    and the **gain** used to score a candidate split are
+    XGBoost is a **gradient-boosted tree model**. It builds the prediction as a sum of
+    many small regression trees:
 
     $$
-    w_j^{*} = -\frac{\sum_{i\in I_j} g_i}{\sum_{i\in I_j} h_i + \lambda},
+    \hat{u}_i = F(x_i) = \sum_{k=1}^{K} f_k(x_i),
+    \qquad f_k \in \mathcal{F}.
+    $$
+
+    Here:
+
+    - $x_i$ is the feature vector for experiment $i$,
+    - $u_i = \log(1 + y_i)$ is the transformed titer target,
+    - $\hat{u}_i$ is the model prediction on that log scale,
+    - $f_k$ is one regression tree,
+    - $\mathcal{F}$ is the space of possible CART-style regression trees.
+
+    The model is fitted **stage-wise**. At boosting round $m$, we already have a model
+    $F_{m-1}$ and add one new tree:
+
+    $$
+    F_m(x_i) = F_{m-1}(x_i) + \eta f_m(x_i),
+    $$
+
+    where $\eta$ is the learning rate. The new tree is chosen to reduce the training
+    loss, while also being penalised for being too complex:
+
+    $$
+    \mathcal{L}^{(m)}
+    =
+    \sum_i \ell\big(u_i, F_{m-1}(x_i) + f_m(x_i)\big)
+    +
+    \Omega(f_m),
+    $$
+
+    with the tree penalty
+
+    $$
+    \Omega(f_m)
+    =
+    \gamma T
+    +
+    \frac{1}{2}\lambda \sum_{j=1}^{T} w_j^2.
+    $$
+
+    Here:
+
+    - $T$ is the number of leaves in the new tree,
+    - $w_j$ is the prediction value assigned to leaf $j$,
+    - $\gamma$ penalises adding extra leaves,
+    - $\lambda$ shrinks leaf values toward zero.
+
+    To decide what tree to add, XGBoost approximates the loss locally using a
+    second-order Taylor expansion around the current prediction
+    $\hat{u}_i^{(m-1)} = F_{m-1}(x_i)$:
+
+    $$
+    \ell\big(u_i, \hat{u}_i^{(m-1)} + f_m(x_i)\big)
+    \approx
+    \ell\big(u_i, \hat{u}_i^{(m-1)}\big)
+    +
+    g_i f_m(x_i)
+    +
+    \frac{1}{2} h_i f_m(x_i)^2,
+    $$
+
+    where
+
+    $$
+    g_i =
+    \frac{\partial \ell(u_i, \hat{u})}{\partial \hat{u}}
+    \bigg|_{\hat{u}=\hat{u}_i^{(m-1)}},
     \qquad
-    \text{gain} = \tfrac{1}{2}\left[
-    \frac{G_L^2}{H_L + \lambda}
-    + \frac{G_R^2}{H_R + \lambda}
-    - \frac{(G_L + G_R)^2}{H_L + H_R + \lambda}
-    \right] - \gamma,
+    h_i =
+    \frac{\partial^2 \ell(u_i, \hat{u})}{\partial \hat{u}^2}
+    \bigg|_{\hat{u}=\hat{u}_i^{(m-1)}}.
     $$
 
-    where $G_{L},G_{R}$ and $H_{L},H_{R}$ are the sums of $g_i$ and $h_i$ over the
-    left/right child. Trees are grown greedily by maximising that gain. With our **squared-error** loss on
-    $u=\log(1+y)$ the statistics are simply $g_i = \hat{u}_i - u_i$ and $h_i = 1$.
+    So $g_i$ tells us the local direction in which the prediction should move, and
+    $h_i$ tells us how strongly curved the loss is around the current prediction.
 
-    **Why this model here.** Trees handle heterogeneous, unscaled features and missing
-    values natively, need little tuning, and — with shallow depth, column/row subsampling
-    and the $\lambda,\gamma$ penalties — control variance on our ~100 samples. The `log1p`
-    target makes errors effectively multiplicative and keeps the loss well-behaved across
-    the wide titer range.
+    For squared-error loss on the log target,
+
+    $$
+    \ell(u_i, \hat{u}_i) = \frac{1}{2}(\hat{u}_i - u_i)^2,
+    $$
+
+    these become especially simple:
+
+    $$
+    g_i = \hat{u}_i - u_i,
+    \qquad
+    h_i = 1.
+    $$
+
+    Now consider one leaf $j$ of a candidate tree. Let $I_j$ be the set of training
+    examples that fall into that leaf. Define the summed gradient and Hessian in that
+    leaf as
+
+    $$
+    G_j = \sum_{i \in I_j} g_i,
+    \qquad
+    H_j = \sum_{i \in I_j} h_i.
+    $$
+
+    For a fixed tree structure, the optimal value assigned to leaf $j$ is
+
+    $$
+    w_j^{*}
+    =
+    -\frac{G_j}{H_j + \lambda}.
+    $$
+
+    This says: if the summed gradient in a leaf is strongly positive, the model should
+    decrease the prediction there; if it is strongly negative, the model should increase
+    it. The $\lambda$ term prevents very large leaf corrections.
+
+    To grow a tree, XGBoost asks whether splitting a leaf into a left and right child
+    would reduce the objective. Let
+
+    $$
+    G_L = \sum_{i \in I_L} g_i,
+    \qquad
+    H_L = \sum_{i \in I_L} h_i,
+    \qquad
+    G_R = \sum_{i \in I_R} g_i,
+    \qquad
+    H_R = \sum_{i \in I_R} h_i.
+    $$
+
+    The split gain is
+
+    $$
+    \mathrm{gain}
+    =
+    \frac{1}{2}
+    \left[
+    \frac{G_L^2}{H_L + \lambda}
+    +
+    \frac{G_R^2}{H_R + \lambda}
+    -
+    \frac{(G_L + G_R)^2}{H_L + H_R + \lambda}
+    \right]
+    -
+    \gamma.
+    $$
+
+    The first two terms measure how good the two child leaves would be after the
+    split. The third term measures how good the original unsplit leaf was. The
+    difference is the improvement from splitting, and $\gamma$ subtracts the cost of
+    adding an extra leaf. A split is only worthwhile if this gain is positive.
+
+    **Why this model here.** XGBoost is a strong baseline for this dataset because it
+    works well with small tabular data, heterogeneous engineered features, nonlinear
+    interactions, and missing values. We also regularise it using shallow trees,
+    subsampling, and the $\lambda,\gamma$ penalties. Training on `log1p(titer)` makes the
+    target less skewed and makes errors closer to relative errors on the original titer
+    scale.
     """)
     return
 
@@ -915,55 +1033,22 @@ def _(mo):
     ## 6. Using the inference service
 
     The trained baseline is served behind a small **FastAPI** app
-    (`titer_prediction.service`) with two endpoints from the provided OpenAPI spec:
-    `GET /health` (liveness + whether a model is loaded) and `POST /predict` (one
-    experiment → predicted final titer). The model is loaded once at startup from
-    `MODEL_PATH` (default `artifacts/xgb_baseline.joblib`; point it at a `.eqx` bundle
-    to serve the neural CDE instead). Invalid payloads return **400**, and if no model
-    is loaded `/predict` returns **503** while `/health` still reports `model_loaded:false`.
-
-    **Run locally**
+    (`titer_prediction.service`) with the two endpoints from the OpenAPI spec:
+    `GET /health` and `POST /predict` (one experiment → predicted final titer). The
+    model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_baseline.joblib`).
 
     ```bash
-    # serve the baseline (uses MODEL_PATH, default artifacts/xgb_baseline.joblib)
+    # serve it
     uv run uvicorn titer_prediction.service.app:app --port 8000
-    ```
 
-    **Call it** — the request carries `timestamps` and a `values` map keyed by the
-    `Z:`/`W:`/`X:` convention (a ready example lives in `scripts/sample_payload.json`):
-
-    ```bash
-    curl -s localhost:8000/health
-    # {"status":"ok","model_loaded":true}
-
+    # predict (a ready example payload is in scripts/sample_payload.json)
     curl -s -X POST localhost:8000/predict \
         -H 'Content-Type: application/json' \
         --data @scripts/sample_payload.json
-    # {"prediction": <titer>, "target":"Y:Titer", "model_type":"xgboost", "n_timepoints":15, ...}
+    # -> {"prediction": <titer>, "target": "Y:Titer", "model_type": "xgboost", ...}
     ```
 
-    **Batch a whole CSV** into the target-template shape (`RowID, Exp, Time[day],
-    Y:Titer`) — this reuses the exact `/predict` conversion path:
-
-    ```bash
-    uv run python -m titer_prediction.service.batch_predict \
-        --data data/datahow_interview_test_data.csv \
-        --model artifacts/xgb_baseline.joblib \
-        --out artifacts/test_predictions.csv
-    ```
-
-    **Docker** — the image doesn't bake in the (git-ignored) model, so mount the
-    artifacts at runtime:
-
-    ```bash
-    docker build -t datahow-titer-service .
-    docker run --rm -p 8000:8000 \
-        -e MODEL_PATH=/app/artifacts/xgb_baseline.joblib \
-        -v "$PWD/artifacts:/app/artifacts:ro" datahow-titer-service
-    ```
-
-    `scripts/smoke_docker.sh` builds the image and asserts this whole contract
-    end-to-end (health, predict, 400 on a bad payload, 503 with no model).
+    Batch prediction and Docker are covered in the README.
     """)
     return
 
