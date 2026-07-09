@@ -2,7 +2,9 @@
 MODEL_PATH ?= artifacts/xgb_best.joblib
 IMAGE ?= datahow-titer-service
 DOCKER ?= docker.exe
+DOCKER_SHELL ?= cmd.exe /C
 PORT ?= 9000
+ARTIFACTS_DIR ?= $(shell command -v cygpath >/dev/null 2>&1 && cygpath -m "$(CURDIR)/artifacts" || printf "%s/artifacts" "$(CURDIR)")
 DATA ?= data/datahow_interview_train_data.csv
 TARGETS ?= data/datahow_interview_train_targets.csv
 TEST_DATA ?= data/datahow_interview_test_data.csv
@@ -54,18 +56,18 @@ api-predict:
 
 # --- Docker ------------------------------------------------------------------
 docker-check:
-	@if ! command -v "$(DOCKER)" >/dev/null 2>&1; then \
+	@if ! $(DOCKER_SHELL) where "$(DOCKER)" >/dev/null 2>&1; then \
 		echo "Docker CLI not found. Install/start Docker Desktop and ensure '$(DOCKER)' is on PATH."; \
 		exit 127; \
 	fi
 
 docker-build: docker-check
-	"$(DOCKER)" build -t $(IMAGE) .
+	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" $(DOCKER_SHELL) "$(DOCKER)" build -t $(IMAGE) .
 
 docker-run: docker-check
-	"$(DOCKER)" run --rm -p $(PORT):8000 \
+	MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" $(DOCKER_SHELL) "$(DOCKER)" run --rm -p $(PORT):8000 \
 		-e MODEL_PATH=/app/artifacts/$(notdir $(MODEL_PATH)) \
-		-v "$(CURDIR)/artifacts:/app/artifacts" $(IMAGE)
+		--mount type=bind,source="$(ARTIFACTS_DIR)",target=/app/artifacts $(IMAGE)
 
 # --- Dev ---------------------------------------------------------------------
 test:
