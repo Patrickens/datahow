@@ -40,9 +40,13 @@ handles variable-length sequences, step-interpolates `W:` controls, linearly
 interpolates `X:` states, and pads batches with a flat final tail so padding
 contributes nothing to the CDE integral.
 
-The XGBoost model is the better production default for this small dataset:
-faster, easier to inspect, simpler to serve, and stronger in validation. The CDE
-is useful as the more structurally faithful sequence-model direction.
+XGBoost is the deployment default for this small dataset: faster, easier to
+inspect, simpler to serve, and validated with robust 5×5 repeated CV (R² ≈ 0.84).
+After an optimisation overhaul (adaptive Tsit5 solver, minibatch training with a
+cosine schedule, train-only standardisation, raw-scale early stopping), the CDE
+reaches R² ≈ 0.84 on a 3-seed holdout — now genuinely competitive rather than just
+the more structurally faithful sequence-model direction. The protocols differ
+(holdout vs repeated CV), so XGBoost stays the default on robustness grounds.
 
 ## Repository Layout
 

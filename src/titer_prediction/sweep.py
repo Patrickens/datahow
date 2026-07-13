@@ -27,16 +27,32 @@ logger = logging.getLogger(__name__)
 # One seed for everything: config sampling, the train/val split, model init, CV,
 # and the final refit. Hardcoded default; the sweep functions/CLI take ``seed=``.
 SEED = 0
-CDE_N_CONFIGS = 10
+CDE_N_CONFIGS = 12
 XGB_N_CONFIGS = 10
+# Each sampled CDE config is scored across this many seeds (different train/val
+# splits + inits); we select on the *mean* val R2, not a single lucky holdout.
+CDE_N_SEEDS = 3
 
-# Bounded grid; exactly CDE_N_CONFIGS configurations are sampled from it.
+# CDE hyperparameter grid. Only the genuinely-swept dimensions live here; the rest
+# of the pipeline (200 epochs, warmup+cosine LR, gradient clipping, adaptive Tsit5
+# solver, train-only standardisation, raw-RMSE early stopping) is fixed in
+# ``cde.train``. Capacity stays capped at hidden<=16. 32 combinations.
 CDE_SWEEP_GRID: dict[str, list] = {
-    "epochs": [250, 400],
-    "lr": [1e-3, 3e-3, 1e-2],
-    "hidden_size": [8, 16, 32],
+    "lr": [3e-3, 1e-2],
+    "hidden_size": [8, 16],
     "width": [32, 64],
     "depth": [1, 2],
+    "batch_size": [16, 32],
+}
+
+# Strongest config recovered from the pre-seed lightweight sweep. Always evaluated
+# in addition to the random sample so a wider search can never regress below it.
+CDE_ANCHOR_CONFIG: dict[str, Any] = {
+    "lr": 1e-2,
+    "hidden_size": 8,
+    "width": 32,
+    "depth": 1,
+    "batch_size": 32,
 }
 
 XGB_SWEEP_GRID: dict[str, list] = {
@@ -87,6 +103,16 @@ def sample_xgb_configs(n_configs: int = XGB_N_CONFIGS, seed: int = SEED) -> list
     return _sample_grid(XGB_SWEEP_GRID, n_configs, seed)
 
 
+def _cde_configs_with_anchor(n_configs: int, seed: int) -> list[dict[str, Any]]:
+    """Sample ``n_configs`` CDE configs and prepend the anchor (deduplicated).
+
+    The anchor guarantees the strongest known config is always scored, so a
+    wider random search can never regress below what we recovered.
+    """
+    sampled = sample_cde_configs(n_configs, seed)
+    return [CDE_ANCHOR_CONFIG] + [c for c in sampled if c != CDE_ANCHOR_CONFIG]
+
+
 def sweep_cde(
     data_path: str | Path,
     targets_path: str | Path,
@@ -95,54 +121,79 @@ def sweep_cde(
     metadata_path: str | Path = "artifacts/cde_best_metadata.json",
     n_configs: int = CDE_N_CONFIGS,
     seed: int = SEED,
+    n_seeds: int = CDE_N_SEEDS,
 ) -> pd.DataFrame:
     """Run the reproducible CDE sweep, then refit and save the best config.
 
-    Each config is fit on the train split only (``cde.train(refit_all=False)``);
-    results — config, final train MSE, and validation RMSE/MAE/MAPE/R2 — are
-    written incrementally to ``out_path`` so a partial sweep is still usable.
+    Each config is scored across ``n_seeds`` seeds (``seed .. seed + n_seeds-1``),
+    each fit on its own train split only (``cde.train(refit_all=False)``). We
+    record the mean and std of the per-seed validation metrics and select on the
+    **mean** ``val_r2`` — a single 20% holdout is too noisy to rank configs. Rows
+    are written incrementally to ``out_path`` so a partial sweep is still usable.
     """
-    configs = sample_cde_configs(n_configs, seed)
+    configs = _cde_configs_with_anchor(n_configs, seed)
+    seeds = list(range(seed, seed + n_seeds))
+    metric_keys = ("train_mse", "val_rmse", "val_mae", "val_mape", "val_r2")
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     rows: list[dict] = []
     for run_index, cfg in enumerate(configs, start=1):
-        logger.info("cde sweep %d/%d: %s", run_index, n_configs, cfg)
+        logger.info("cde sweep %d/%d (x%d seeds): %s", run_index, len(configs), n_seeds, cfg)
         started = time.perf_counter()
-        _, val_metrics, history = cde.train(
-            data_path,
-            targets_path,
-            refit_all=False,
-            seed=seed,
-            **cfg,
-        )
+        per_seed: dict[str, list[float]] = {k: [] for k in metric_keys}
+        for s in seeds:
+            _, val_metrics, history = cde.train(
+                data_path,
+                targets_path,
+                refit_all=False,
+                seed=s,
+                **cfg,
+            )
+            record = {
+                "train_mse": history[-1]["train_mse"],
+                **{f"val_{k}": v for k, v in val_metrics.items()},
+            }
+            for k in metric_keys:
+                per_seed[k].append(float(record[k]))
         runtime_s = time.perf_counter() - started
+
+        aggregates: dict[str, float] = {}
+        for k in metric_keys:
+            values = np.asarray(per_seed[k], dtype=float)
+            aggregates[f"{k}_mean"] = float(np.mean(values))
+            aggregates[f"{k}_std"] = float(np.std(values))
         rows.append(
             {
                 "run_index": run_index,
-                "seed": seed,
+                "is_anchor": cfg == CDE_ANCHOR_CONFIG,
+                "n_seeds": n_seeds,
+                "seeds": str(seeds),
                 **cfg,
-                "train_mse": history[-1]["train_mse"],
-                "val_mse": history[-1].get("val_mse", np.nan),
-                **{f"val_{k}": v for k, v in val_metrics.items()},
+                **aggregates,
                 "runtime_s": runtime_s,
             }
         )
         pd.DataFrame(rows).to_csv(out_path, index=False)  # incremental save
 
     results = pd.DataFrame(rows)
-    best_idx = results["val_r2"].astype(float).idxmax()
+    best_idx = results["val_r2_mean"].astype(float).idxmax()
     best_row = results.loc[best_idx].to_dict()
     best_config = {
-        "epochs": int(best_row["epochs"]),
         "lr": float(best_row["lr"]),
         "hidden_size": int(best_row["hidden_size"]),
         "width": int(best_row["width"]),
         "depth": int(best_row["depth"]),
+        "batch_size": int(best_row["batch_size"]),
     }
 
-    logger.info("Refitting best CDE config on all data: %s", best_config)
+    logger.info(
+        "Best CDE config (val_r2=%.3f+/-%.3f): %s",
+        best_row["val_r2_mean"],
+        best_row["val_r2_std"],
+        best_config,
+    )
+    logger.info("Refitting best CDE config on all data with seed=%d", seed)
     bundle, _, _ = cde.train(
         data_path,
         targets_path,
@@ -153,9 +204,11 @@ def sweep_cde(
     metadata = {
         "model_type": "cde",
         "created_utc": datetime.now(UTC).isoformat(),
-        "selection_metric": "val_r2",
-        "n_configs": n_configs,
+        "selection_metric": "val_r2_mean",
+        "n_configs": len(configs),
         "seed": seed,
+        "n_seeds": n_seeds,
+        "seeds": seeds,
         "best_config": best_config,
         "best_validation": best_row,
         "sweep_results": str(out_path),
@@ -277,6 +330,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=None)
     parser.add_argument("--metadata", default=None)
     parser.add_argument("--n-configs", type=int, default=None)
+    parser.add_argument("--n-seeds", type=int, default=CDE_N_SEEDS, help="Seeds per CDE config.")
     parser.add_argument("--seed", type=int, default=SEED)
     return parser
 
@@ -296,6 +350,7 @@ def main(argv: list[str] | None = None) -> int:
             metadata_path=args.metadata or "artifacts/cde_best_metadata.json",
             n_configs=args.n_configs or CDE_N_CONFIGS,
             seed=args.seed,
+            n_seeds=args.n_seeds,
         )
     else:
         sweep_xgb(

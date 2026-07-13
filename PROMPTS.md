@@ -332,6 +332,49 @@ features, tuned sweep outputs, and a clearer modelling comparison.
 - `PROMPTS.md` remains the curated AI-use record; local `claude_*.txt` scratch
   files are ignored and purged from repository history.
 
+## 13. Neural CDE performance investigation and hardening
+
+**Goal.** Understand why the CDE underperformed, recover a "lost" strong result,
+make config selection trustworthy, and act on an external code review — then keep
+only what is actually used.
+
+**Prompt (refined).**
+> The CDE sweep hardcodes epochs as a swept number — pin it. A pre-`opencode`
+> commit once produced a CDE with ~0.93 validation R2, far better than the current
+> sweep; check that commit out, re-run its 2-config sweep, and recover the winning
+> hyperparameters. Then question the result: the CDE scores only ~0.75 — why? Give
+> me options and widen the search (more learning rates, a decay schedule, other
+> dimensions). Finally, work through this neural-CDE review: switch to an adaptive
+> solver (step only between knots is too coarse), add minibatching (one update per
+> epoch is too few), fix the standardiser data leakage (fit on train only), early-
+> stop on the *denormalised* metric I actually care about, and reduce capacity
+> (cap hidden size at 16). Keep tanh. Then remove everything we don't sweep from
+> the grid and the code to keep it lean, and record all of this.
+
+**Key decisions taken.**
+- The remembered **0.93 was a lucky-split artifact.** It came from the pre-seed
+  lightweight sweep (`583ea5a`, epochs=600/seed=2); the same hyperparameters on the
+  current pipeline average only ~0.58 across seeds. This motivated everything below.
+- **Selection is now multi-seed.** Each config is scored as the *mean* validation
+  R2 over 3 seeds (not one 20% holdout), which is what removed the split-luck noise.
+  A deterministic *anchor* config guarantees the recovered region is always scored.
+- **Optimisation was the real bottleneck, not architecture.** Acting on the review —
+  adaptive `Tsit5`+`PIDController` solver (keeping the `tanh` field bound),
+  minibatch training with a warmup+cosine schedule over total steps, and gradient
+  clipping — lifted the honest 3-seed mean from **~0.79 to ~0.84**, even after fixing
+  the leakage (below), which by itself lowers the number.
+- **Data-leakage fix:** standardisation is fit on the **train split only** for the
+  holdout fit; the deployed model refits (and re-standardises) on all data.
+- **Early stopping** now tracks the raw-scale validation RMSE, and the deployed
+  model refits for the early-stopped epoch count.
+- **Capacity:** hidden size capped at ≤16; the best model is the smallest (hidden 8,
+  depth 1), confirming over-parameterisation on ~80 training sequences.
+- **Leanness:** knobs that were tried but not adopted (weight decay, dropout, the
+  constant-LR and fixed-Heun alternatives) were removed from both the grid and
+  `cde.train`; the fixed pipeline (200 epochs, cosine, clipping, Tsit5) is baked in
+  and only genuinely-swept dimensions (`lr`, `hidden_size`, `width`, `depth`,
+  `batch_size`) remain in `CDE_SWEEP_GRID`.
+
 <!--
 Template for subsequent entries:
 

@@ -879,7 +879,7 @@ def _(mo):
 
 @app.cell
 def _(plotting):
-    fig_curves = plotting.plot_cde_training_curves(epochs=250)
+    fig_curves = plotting.plot_cde_training_curves(epochs=200)
     fig_curves
     return
 
@@ -890,12 +890,13 @@ def _(Path, json, mo):
 
     mo.md(
         f"""
-        ### Small CDE sweep
+        ### CDE sweep
 
-        I sampled **{_metadata["n_configs"]}** CDE configurations with a single fixed
-        `seed={_metadata["seed"]}` (config sampling, the 20% validation split and model
-        initialisation all derive from it). The table below is sorted by validation R² and
-        shows the top configurations.
+        I sampled **{_metadata["n_configs"]}** CDE configurations and scored each across
+        **{_metadata["n_seeds"]} seeds** (`seeds={_metadata["seeds"]}` — each drives its own
+        20% validation split and model initialisation). Selection is on the **mean**
+        validation R² across seeds, not a single lucky holdout; the table below is sorted by
+        mean validation R² and reports its spread (±std).
         """
     )
     return
@@ -905,23 +906,24 @@ def _(Path, json, mo):
 def _(pd):
     _cde_sweep = pd.read_csv("artifacts/cde_sweep_results.csv")
     _cde_sweep_display = (
-        _cde_sweep.sort_values("val_r2", ascending=False)
+        _cde_sweep.sort_values("val_r2_mean", ascending=False)
         .head(5)
         .loc[
             :,
             [
                 "run_index",
-                "epochs",
                 "lr",
                 "hidden_size",
                 "width",
                 "depth",
-                "val_rmse",
-                "val_mape",
-                "val_r2",
+                "batch_size",
+                "val_rmse_mean",
+                "val_mape_mean",
+                "val_r2_mean",
+                "val_r2_std",
             ],
         ]
-        .round({"lr": 4, "val_rmse": 0, "val_mape": 3, "val_r2": 3})
+        .round({"lr": 4, "val_rmse_mean": 0, "val_mape_mean": 3, "val_r2_mean": 3, "val_r2_std": 3})
     )
     _cde_sweep_display
     return
@@ -936,8 +938,10 @@ def _(Path, json, mo):
     mo.md(
         f"""
         The best configuration was run **{int(_best["run_index"])}**:
-        `epochs={_cfg["epochs"]}`, `lr={_cfg["lr"]}`, `hidden_size={_cfg["hidden_size"]}`,
-        `width={_cfg["width"]}`, `depth={_cfg["depth"]}`.
+        `lr={_cfg["lr"]}`, `hidden_size={_cfg["hidden_size"]}`, `width={_cfg["width"]}`,
+        `depth={_cfg["depth"]}`, `batch_size={_cfg["batch_size"]}`. The rest of the pipeline
+        is fixed: 200 epochs, a warmup+cosine LR schedule with gradient clipping, an adaptive
+        Tsit5 solver, train-only standardisation, and early stopping on raw-scale RMSE.
         """
     )
     return
@@ -952,12 +956,18 @@ def _(Path, json, mo):
         f"""
         ### Best CDE: result
 
-        The selected CDE reached **validation RMSE ≈ {_best["val_rmse"]:.0f}**,
-        **MAPE ≈ {100 * _best["val_mape"]:.1f}%**, and **R² ≈ {_best["val_r2"]:.2f}**
-        on the fixed 20% holdout. That is encouraging, but the single holdout is still
-        noisy on ~100 experiments. I therefore keep the main conclusion pragmatic:
-        XGBoost is the dependable deployment baseline, while the CDE demonstrates the
-        path-based methodology for ragged, controlled trajectories.
+        The selected CDE reached **validation RMSE ≈ {_best["val_rmse_mean"]:.0f}**,
+        **MAPE ≈ {100 * _best["val_mape_mean"]:.1f}%**, and **R² ≈ {_best["val_r2_mean"]:.2f}
+        ± {_best["val_r2_std"]:.2f}** (mean over {_best["n_seeds"]} seeds). An earlier
+        version of this model sat near R² ≈ 0.75; switching to an adaptive Tsit5 solver,
+        minibatch training with a cosine schedule, and honest train-only standardisation —
+        i.e. fixing the *optimisation*, not the architecture — lifted it to the number above.
+
+        This is now competitive with the XGBoost baseline (repeated-CV R² ≈ 0.84), though the
+        protocols differ (3-seed holdout vs 5×5 repeated CV), so the comparison is indicative
+        rather than exact. I still deploy XGBoost by default — it is faster, simpler to serve,
+        and its repeated-CV estimate is more robust on ~100 experiments — but the CDE is no
+        longer merely a methodological demo; it is a genuinely competitive path-based model.
         """
     )
     return
@@ -999,9 +1009,11 @@ def _(mo):
     ### Takeaways
 
     - Clean, interpretable feature engineering plus a well-regularised,
-      honestly-benchmarked baseline reaches **R² ≈ 0.84**.
-    - The neural CDE demonstrates the path-based methodology; **hybrid mechanistic
-      models** are the interpretable, data-efficient destination.
+      honestly-benchmarked XGBoost baseline reaches **R² ≈ 0.84** (5×5 repeated CV).
+    - The neural CDE, after fixing the optimisation (adaptive solver, minibatching,
+      cosine schedule) and the standardisation leakage, reaches **R² ≈ 0.84** on a
+      3-seed holdout — competitive with the baseline, not just a methodological demo;
+      **hybrid mechanistic models** remain the interpretable, data-efficient destination.
     - Performance was never the point of this challenge — clarity of the pipeline and of
       the decisions was.
     """)

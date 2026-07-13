@@ -287,16 +287,18 @@ class NeuralCDE(eqx.Module):
         # the absolute starting state (initial VCD, substrate levels) would be
         # invisible unless injected into z0 here.
         z0 = self.initial(jnp.concatenate([static, ys[0]]))
+        # Adaptive higher-order solve: Tsit5 with PID step control subdivides each
+        # unit-s segment as needed (finer than one fixed step per knot).
         sol = dfx.diffeqsolve(
             term,
-            dfx.Heun(),
+            dfx.Tsit5(),
             t0=s[0],
             t1=s[-1],
-            dt0=None,
+            dt0=1.0,
             y0=z0,
-            stepsize_controller=dfx.StepTo(ts=s),
+            stepsize_controller=dfx.PIDController(rtol=1e-3, atol=1e-6),
             saveat=dfx.SaveAt(t1=True),
-            max_steps=2 * ys.shape[0],
+            max_steps=4096,
         )
         return self.readout(sol.ys[-1])[0]
 
@@ -333,31 +335,47 @@ def train(
     targets_path: str | Path,
     hidden_size: int = 8,
     width: int = 32,
-    depth: int = 2,
-    epochs: int = 300,
+    depth: int = 1,
+    epochs: int = 200,
     lr: float = 3e-3,
     val_frac: float = 0.2,
     seed: int = SEED,
     refit_all: bool = True,
+    batch_size: int = 32,
 ) -> tuple[CDEBundle, dict[str, float], list[dict]]:
     """Train the neural CDE with a validation holdout, then refit on all data.
 
-    A single ``seed`` drives all randomness — the train/validation split and both
-    model initialisations. Set ``refit_all=False`` to skip the deploy-time refit
-    (used by the sweep, which only needs the holdout metrics).
+    A single ``seed`` drives all randomness — the train/validation split, model
+    initialisation, and minibatch shuffling. Set ``refit_all=False`` to skip the
+    deploy-time refit (used by the sweep, which only needs the holdout metrics).
+
+    Optimisation is fixed: an Adam step with global-norm gradient clipping on a
+    warmup+cosine LR schedule, minibatches of ``batch_size`` reshuffled each epoch,
+    and an adaptive Tsit5 solve. Standardisation is fit on the **train split only**
+    for the honest holdout fit (no leakage into validation) and refit on all data
+    for the deployed model. The holdout fit uses **early stopping** on the raw-scale
+    validation RMSE; the deployed model is refit for that many epochs.
     """
     seq = dp.build_sequences(data_path, targets_path)
-    standardizer = fit_standardizer(seq)
-    ys_np, static_np, y_np = build_arrays(seq, standardizer)
     raw_titer = np.array([e.target for e in seq.experiments], dtype=float)
     # Dynamic channels are ordered W: then X:, so the W: count is the split point.
     n_w = sum(c.startswith(schema.CONTROL_PREFIX) for c in seq.channel_names)
 
-    n = ys_np.shape[0]
+    n = len(seq.experiments)
     rng = np.random.default_rng(seed)
     perm = rng.permutation(n)
     n_val = max(1, int(round(val_frac * n)))
     val_idx, train_idx = perm[:n_val], perm[n_val:]
+
+    # Fit standardisation on the TRAIN split only (no val/test leakage), then apply
+    # those stats to every experiment for the holdout fit.
+    train_seq = dp.SequenceData(
+        experiments=[seq.experiments[i] for i in train_idx],
+        channel_names=seq.channel_names,
+        static_names=seq.static_names,
+    )
+    std_train = fit_standardizer(train_seq)
+    ys_np, static_np, y_np = build_arrays(seq, std_train)
 
     config = {
         "hidden_size": hidden_size,
@@ -365,6 +383,7 @@ def train(
         "depth": depth,
         "epochs": epochs,
         "lr": lr,
+        "batch_size": batch_size,
         "val_frac": val_frac,
         "seed": seed,
         "refit_all": refit_all,
@@ -376,43 +395,80 @@ def train(
         "val_indices": [int(i) for i in val_idx],
     }
 
-    def fit(train_indices, key, val_indices=None):
-        """Train a model; return ``(model, history)`` with per-checkpoint metrics."""
-        model = NeuralCDE(
-            static_np.shape[1], ys_np.shape[2], n_w, hidden_size, width, depth, key=key
+    def _make_optimizer(total_steps: int):
+        """Adam on a warmup+cosine schedule with global-norm gradient clipping.
+
+        ``total_steps`` is the number of optimisation updates (epochs × batches),
+        so the schedule spans the real update count under minibatching.
+        """
+        schedule = optax.warmup_cosine_decay_schedule(
+            init_value=0.0,
+            peak_value=lr,
+            warmup_steps=max(1, int(0.1 * total_steps)),
+            decay_steps=total_steps,
+            end_value=lr * 0.1,
         )
-        optim = optax.adam(lr)
-        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
-        ys_tr = jnp.asarray(ys_np[train_indices])
-        static_tr = jnp.asarray(static_np[train_indices])
-        y_tr = jnp.asarray(y_np[train_indices])
+        return optax.chain(optax.clip_by_global_norm(1.0), optax.adam(schedule))
+
+    def fit(train_indices, key, ys_all, static_all, y_all, standardizer, val_indices=None, n_epochs=None):
+        """Train a model; return ``(model, history, best_epoch)``.
+
+        Minibatches of ``batch_size`` are reshuffled each epoch, giving
+        ``len(train)//batch_size`` updates/epoch. With a validation set, ``model``
+        is the **early-stopped** checkpoint (lowest raw-scale val RMSE) and
+        ``history`` is truncated there; otherwise the final model.
+        """
+        n_epochs = epochs if n_epochs is None else n_epochs
+        model = NeuralCDE(
+            static_all.shape[1],
+            ys_all.shape[2],
+            n_w,
+            hidden_size,
+            width,
+            depth,
+            key=key,
+        )
+        ys_tr = jnp.asarray(ys_all[train_indices])
+        static_tr = jnp.asarray(static_all[train_indices])
+        y_tr = jnp.asarray(y_all[train_indices])
         raw_tr = raw_titer[train_indices]
+        y_tr_np = np.asarray(y_all[train_indices])
+
+        n_train = len(train_indices)
+        bs = min(int(batch_size), n_train)
+        steps_per_epoch = max(1, n_train // bs)
+        optim = _make_optimizer(n_epochs * steps_per_epoch)
+        opt_state = optim.init(eqx.filter(model, eqx.is_inexact_array))
 
         has_val = val_indices is not None and len(val_indices) > 0
         if has_val:
-            ys_va = jnp.asarray(ys_np[val_indices])
-            static_va = jnp.asarray(static_np[val_indices])
-            y_va = np.asarray(y_np[val_indices])
+            ys_va = jnp.asarray(ys_all[val_indices])
+            static_va = jnp.asarray(static_all[val_indices])
             raw_va = raw_titer[val_indices]
 
         @eqx.filter_jit
-        def step(model, opt_state):
+        def step(model, opt_state, ys_b, static_b, y_b):
             def loss_fn(m):
-                pred = _predict_batch(m, ys_tr, static_tr)
-                return jnp.mean((pred - y_tr) ** 2)
+                pred = _predict_batch(m, ys_b, static_b)
+                return jnp.mean((pred - y_b) ** 2)
 
             loss, grads = eqx.filter_value_and_grad(loss_fn)(model)
-            updates, opt_state = optim.update(grads, opt_state, model)
+            updates, opt_state = optim.update(grads, opt_state)
             model = eqx.apply_updates(model, updates)
             return model, opt_state, loss
 
+        shuffle_rng = np.random.default_rng(seed)
         history: list[dict] = []
-        every = max(1, epochs // 30)
-        for epoch in range(epochs):
-            model, opt_state, loss = step(model, opt_state)
-            if epoch % every == 0 or epoch == epochs - 1:
-                record = {"epoch": epoch, "train_mse": float(loss)}
+        every = max(1, n_epochs // 30)
+        best_model, best_val_rmse, best_epoch, best_pos = model, np.inf, n_epochs - 1, 0
+        for epoch in range(n_epochs):
+            order = shuffle_rng.permutation(n_train)
+            for b in range(steps_per_epoch):
+                bi = order[b * bs : (b + 1) * bs]
+                model, opt_state, _ = step(model, opt_state, ys_tr[bi], static_tr[bi], y_tr[bi])
+            if epoch % every == 0 or epoch == n_epochs - 1:
                 train_pred_std = np.asarray(_predict_batch(model, ys_tr, static_tr))
+                record = {"epoch": epoch, "train_mse": float(np.mean((train_pred_std - y_tr_np) ** 2))}
                 train_metrics = _metrics(raw_tr, standardizer.denorm_target(train_pred_std))
                 record.update(
                     train_rmse=train_metrics["rmse"],
@@ -421,45 +477,60 @@ def train(
                 )
                 if has_val:
                     val_pred_std = np.asarray(_predict_batch(model, ys_va, static_va))
-                    record["val_mse"] = float(np.mean((val_pred_std - y_va) ** 2))
                     m = _metrics(raw_va, standardizer.denorm_target(val_pred_std))
                     record.update(val_rmse=m["rmse"], val_mae=m["mae"], val_r2=m["r2"])
+                    if record["val_rmse"] < best_val_rmse:
+                        best_val_rmse = record["val_rmse"]
+                        best_model, best_epoch, best_pos = model, epoch, len(history)
                 history.append(record)
                 logger.info(
                     "  epoch %3d/%d  train MSE=%.4f%s",
                     epoch,
-                    epochs,
-                    float(loss),
+                    n_epochs,
+                    record["train_mse"],
                     f"  val R2={record['val_r2']:.3f}" if has_val else "",
                 )
-        return model, history
+        if has_val:
+            return best_model, history[: best_pos + 1], best_epoch
+        return model, history, n_epochs - 1
 
     # One seed for both fits; they train on different data so identical init keys
     # are fine and keep the randomness controlled by a single knob.
     k_val = jax.random.PRNGKey(seed)
     k_full = jax.random.PRNGKey(seed)
 
-    # 1) Fit on the train split; report honest validation metrics and keep history.
+    # 1) Fit on the train split; report honest (early-stopped) validation metrics.
     logger.info("Fitting holdout model (%d train / %d val)...", len(train_idx), n_val)
-    val_model, history = fit(train_idx, k_val, val_indices=val_idx)
+    val_model, history, best_epoch = fit(
+        train_idx, k_val, ys_np, static_np, y_np, std_train, val_indices=val_idx
+    )
     val_pred_std = np.asarray(
         _predict_batch(val_model, jnp.asarray(ys_np[val_idx]), jnp.asarray(static_np[val_idx]))
     )
-    val_metrics = _metrics(raw_titer[val_idx], standardizer.denorm_target(val_pred_std))
+    val_metrics = _metrics(raw_titer[val_idx], std_train.denorm_target(val_pred_std))
     logger.info(
-        "[cde:val] RMSE=%.1f  MAE=%.1f  MAPE=%.1f%%  R2=%.3f",
+        "[cde:val] best epoch %d  RMSE=%.1f  MAE=%.1f  MAPE=%.1f%%  R2=%.3f",
+        best_epoch,
         val_metrics["rmse"],
         val_metrics["mae"],
         val_metrics["mape"] * 100,
         val_metrics["r2"],
     )
 
-    # 2) Refit on all data for the deployed model (skipped during sweeps).
+    # 2) Refit on all data for the deployed model (skipped during sweeps). Standardise
+    # on all data (legitimate — the deployed model trains on everything) and train for
+    # the early-stopped epoch count so the deployed fit inherits the same stopping.
     if refit_all:
-        logger.info("Refitting on all %d experiments...", n)
-        deploy_model, _ = fit(np.arange(n), k_full)
+        std_all = fit_standardizer(seq)
+        ys_all, static_all, y_all = build_arrays(seq, std_all)
+        logger.info("Refitting on all %d experiments for %d epochs...", n, best_epoch + 1)
+        deploy_model, _, _ = fit(
+            np.arange(n), k_full, ys_all, static_all, y_all, std_all, n_epochs=best_epoch + 1
+        )
+        standardizer = std_all
     else:
         deploy_model = val_model
+        standardizer = std_train
 
     bundle = CDEBundle(
         model=deploy_model,
@@ -553,9 +624,10 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     p_train.add_argument("--model", required=True)
     p_train.add_argument("--hidden-size", type=int, default=8)
     p_train.add_argument("--width", type=int, default=32)
-    p_train.add_argument("--depth", type=int, default=2)
-    p_train.add_argument("--epochs", type=int, default=300)
+    p_train.add_argument("--depth", type=int, default=1)
+    p_train.add_argument("--epochs", type=int, default=200)
     p_train.add_argument("--lr", type=float, default=3e-3)
+    p_train.add_argument("--batch-size", type=int, default=32)
     p_train.add_argument("--val-frac", type=float, default=0.2)
     p_train.add_argument("--seed", type=int, default=SEED)
     p_train.add_argument(
@@ -581,6 +653,7 @@ def _run_train(args: argparse.Namespace) -> int:
         depth=args.depth,
         epochs=args.epochs,
         lr=args.lr,
+        batch_size=args.batch_size,
         val_frac=args.val_frac,
         seed=args.seed,
     )

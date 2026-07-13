@@ -14,7 +14,7 @@ def test_sample_cde_configs_is_deterministic_and_seeded():
     # A different seed samples a different set.
     assert sweep.sample_cde_configs(seed=sweep.SEED + 1) != configs
     # Configs are pure hyperparameters now — no per-config seed key.
-    assert all("epochs" in cfg and "lr" in cfg and "hidden_size" in cfg for cfg in configs)
+    assert all("lr" in cfg and "hidden_size" in cfg and "batch_size" in cfg for cfg in configs)
     assert all("model_seed" not in cfg and "seed" not in cfg for cfg in configs)
 
 
