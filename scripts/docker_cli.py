@@ -13,8 +13,7 @@ def _docker_executable(name: str) -> str:
     docker = shutil.which(name) or shutil.which("docker.exe") or shutil.which("docker")
     if docker is None:
         raise SystemExit(
-            "Docker CLI not found. Install/start Docker Desktop and ensure "
-            f"'{name}' is on PATH."
+            f"Docker CLI not found. Install/start Docker Desktop and ensure '{name}' is on PATH."
         )
     return docker
 

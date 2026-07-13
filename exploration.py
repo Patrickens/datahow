@@ -869,10 +869,17 @@ def _(mo):
     ### Training curves
 
     Because the CDE is trained by gradient descent (unlike the closed-form baseline), we
-    track **train and validation RMSE in raw titer units** over epochs. That is easier
-    to interpret than standardised log-space MSE. The untrained epoch-0 checkpoint is
-    omitted because random log-space predictions can explode after `expm1` and dominate
-    the plot scale; the remaining checkpoints show the actual optimisation trajectory.
+    track **train and validation RMSE in raw titer units** (easier to read than
+    standardised log-space MSE) plus validation R², as the **mean ± range over the
+    sweep's 3 selection seeds** for the chosen config — a single seed's holdout is too
+    noisy to read on its own.
+
+    The dashed line is the **deployed selection metric, R² ≈ 0.84**: the mean over the 3
+    seeds of *each seed's early-stopped best epoch*. The mean-R² **curve** peaks a little
+    below that line because the seeds reach their best at different epochs, so no single
+    epoch has all three at their peak at once — a normal consequence of multi-seed early
+    stopping, not a discrepancy. The untrained epoch-0 point is omitted (random log-space
+    predictions explode after `expm1` and would dominate the scale).
     """)
     return
 
@@ -1023,17 +1030,111 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## 6. Using the inference service
+    ## 6. Service architecture
 
-    The trained baseline is served behind a small **FastAPI** app
-    (`titer_prediction.service`) with the two endpoints from the OpenAPI spec:
-    `GET /health` and `POST /predict` (one experiment → predicted final titer). The
-    model loads once at startup from `MODEL_PATH` (default `artifacts/xgb_best.joblib`).
+    Part 2 is a thin, model-agnostic **FastAPI** service (`titer_prediction.service`)
+    exposing the spec's `GET /health` and `POST /predict`. The guiding principle:
+    **HTTP concerns never mix with model logic** — each layer has one job.
+
+    - **`app.py`** — routes + exception handlers. Routes stay thin (validate,
+      delegate, return). The model is loaded **once at startup** (`lifespan`) into
+      `app.state` and injected via a `get_predictor` dependency, which is overridden
+      in tests to swap in a mock.
+    - **`dto.py`** — Pydantic v2 DTOs. `PredictRequest` mirrors the OpenAPI schema
+      (`timestamps` + a `values` map of `Z:`/`W:`/`X:` variable → array) and enforces
+      structure: finite, strictly-increasing timestamps; each channel length matching
+      the timeline (`Z:` scalars may be length 1); at least one variable per prefix.
+      `PredictResponse` returns the prediction plus provenance (`model_type`,
+      `n_timepoints`, `experiment_id`).
+    - **`predictor.py`** — the *only* place the API touches model data. It rebuilds a
+      one-experiment DataFrame in **exactly the training shape** (`Exp`, `Time[day]`,
+      `Z:/W:/X:`) and calls the model's `predict_frame`, which flows through the same
+      `read_inputs` preprocessing as training — so serving cannot drift from training.
+    - **`model_loader.py`** — dispatches on artifact suffix (`.joblib` → XGBoost,
+      `.eqx` → CDE) behind a single `Predictor` `Protocol`. Model modules are imported
+      **lazily**, so serving the tabular baseline never pulls in the JAX/diffrax stack.
+    - **`config.py` / `errors.py`** — env-driven settings (`MODEL_PATH`) and the domain
+      exceptions the handlers map to status codes.
+
+    **Error semantics** (mapped centrally, so routes raise and never format HTTP): a
+    missing or unloadable model → **503** (the app still boots; `/health` reports
+    `model_loaded=false`); a payload that is structurally invalid (Pydantic) *or*
+    semantically incomplete for the loaded model (`PayloadError`) → **400**, matching
+    the OpenAPI spec (overriding FastAPI's default 422); anything unexpected → **500**.
+    The service is **stateless** — one startup load, no per-request model IO.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 7. Testing strategy
+
+    A small **pyramid**, fast by default and honest about what it covers:
+
+    - **Data & feature invariants** (`test_data_integrity.py`) — forward-filled
+      statics, one feature row per experiment, trapezoidal/NaN-safe AUC,
+      feed-accounting and cell-density features, ragged (unpadded) sequences, and the
+      CDE's flat-tail padding + mixed path. A synthetic fixture exercises the logic;
+      real-data tests skip when the confidential CSVs are absent.
+    - **Sweep determinism** (`test_sweep.py`) — config sampling is reproducible under a
+      fixed seed and rejects over-large requests, backing the reproducibility claims.
+    - **API layer with a mock** (`test_service.py`) — endpoints tested via FastAPI
+      `dependency_overrides` with a **mocked** predictor, covering validation,
+      conversion and error-mapping *without* expensive inference: health, 503 without a
+      model, `Z:`-scalar expansion, and rejection of bad timestamps/lengths/prefixes.
+    - **Real-model integration** (`test_service_integration.py`) — loads the actual
+      `xgb_best.joblib` and runs inference end-to-end over HTTP and in batch; skips
+      cleanly when the artifact or test CSV is absent.
+    - **Docker smoke** (`test_docker_smoke.py`, `-m docker`) — builds the image and
+      asserts the full contract with and without the model mounted (200/400/503);
+      pure-Python, auto-skips without a Docker daemon, so it runs on Windows and Linux CI.
+    - **Lint/format** — `ruff check` + `ruff format --check`, bundled in `make check`.
+
+    The split is deliberate: fast tests (mock + synthetic) run everywhere and pin
+    behaviour; the slow, environment-dependent tests (real artifact, Docker) add
+    end-to-end confidence but never block a fresh clone or CI without the data.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 8. Reproducibility & the pipeline
+
+    One path from CSVs to a served model, each stage its own module (see the repo
+    layout): `data_preprocessing` → `features` (XGBoost) or ragged sequences (CDE) →
+    `regression`/`cde` training → serialised **bundles** (`.joblib` / `.eqx`, each
+    carrying its own preprocessing + config so serving needs no retraining) →
+    reproducible `sweep`s that select and refit the best config.
+
+    Reproducibility is explicit. A single `seed` drives every split, sample and
+    initialisation; the XGBoost sweep selects on **5×5 repeated CV**, while the CDE
+    sweep scores each config as the **mean over 3 seeds** (not one lucky holdout) and
+    fits standardisation on the **train split only** to avoid validation leakage.
+    `make models` rebuilds the artifacts, `make figures` the plots, and `make notebook`
+    this document — all from the (git-ignored) challenge data.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 9. Deployment & running the service
+
+    The same app runs locally or in Docker, with the model **mounted at runtime**,
+    not baked into the image — so one image serves either model family and switching
+    is a config change, not a rebuild:
 
     ```bash
     make run-api        # serve xgb_best.joblib on :9000 (uvicorn)
     make api-health     # GET  /health   -> {"status":"ok","model_loaded":true}
     make api-predict    # POST /predict  (scripts/sample_payload.json) -> a titer
+
+    MODEL_PATH=artifacts/cde_best.eqx make run-api   # serve the CDE instead
 
     # in Docker (model mounted, not baked in):
     make docker-build
@@ -1042,14 +1143,10 @@ def _(mo):
     make docker-api-predict  # from another terminal
     ```
 
-    **Reproduce everything.** The best models are committed, so the service and this
-    notebook work without training. To rebuild from scratch:
-
-    ```bash
-    make predict            # test-set predictions -> artifacts/test_predictions.csv
-    make figures            # regenerate the figures above (FORCE=1 to refresh caches)
-    make models FORCE=1     # re-run both sweeps (single seed=0) and refit the best models
-    ```
+    `batch_predict` reuses the exact request-conversion path for CSV scoring
+    (`make predict` → `artifacts/test_predictions.csv`), so online and batch inference
+    share one code path. Model artifacts are **git-ignored and reproducible** from the
+    challenge data, not committed to the repo.
     """)
     return
 

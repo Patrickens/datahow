@@ -410,13 +410,15 @@ def train(
         )
         return optax.chain(optax.clip_by_global_norm(1.0), optax.adam(schedule))
 
-    def fit(train_indices, key, ys_all, static_all, y_all, standardizer, val_indices=None, n_epochs=None):
+    def fit(
+        train_indices, key, ys_all, static_all, y_all, standardizer, val_indices=None, n_epochs=None
+    ):
         """Train a model; return ``(model, history, best_epoch)``.
 
         Minibatches of ``batch_size`` are reshuffled each epoch, giving
         ``len(train)//batch_size`` updates/epoch. With a validation set, ``model``
-        is the **early-stopped** checkpoint (lowest raw-scale val RMSE) and
-        ``history`` is truncated there; otherwise the final model.
+        is the **early-stopped** checkpoint (lowest raw-scale val RMSE); ``history``
+        is the full per-checkpoint trajectory and ``best_epoch`` marks the pick.
         """
         n_epochs = epochs if n_epochs is None else n_epochs
         model = NeuralCDE(
@@ -460,7 +462,7 @@ def train(
         shuffle_rng = np.random.default_rng(seed)
         history: list[dict] = []
         every = max(1, n_epochs // 30)
-        best_model, best_val_rmse, best_epoch, best_pos = model, np.inf, n_epochs - 1, 0
+        best_model, best_val_rmse, best_epoch = model, np.inf, n_epochs - 1
         for epoch in range(n_epochs):
             order = shuffle_rng.permutation(n_train)
             for b in range(steps_per_epoch):
@@ -468,7 +470,10 @@ def train(
                 model, opt_state, _ = step(model, opt_state, ys_tr[bi], static_tr[bi], y_tr[bi])
             if epoch % every == 0 or epoch == n_epochs - 1:
                 train_pred_std = np.asarray(_predict_batch(model, ys_tr, static_tr))
-                record = {"epoch": epoch, "train_mse": float(np.mean((train_pred_std - y_tr_np) ** 2))}
+                record = {
+                    "epoch": epoch,
+                    "train_mse": float(np.mean((train_pred_std - y_tr_np) ** 2)),
+                }
                 train_metrics = _metrics(raw_tr, standardizer.denorm_target(train_pred_std))
                 record.update(
                     train_rmse=train_metrics["rmse"],
@@ -481,7 +486,7 @@ def train(
                     record.update(val_rmse=m["rmse"], val_mae=m["mae"], val_r2=m["r2"])
                     if record["val_rmse"] < best_val_rmse:
                         best_val_rmse = record["val_rmse"]
-                        best_model, best_epoch, best_pos = model, epoch, len(history)
+                        best_model, best_epoch = model, epoch
                 history.append(record)
                 logger.info(
                     "  epoch %3d/%d  train MSE=%.4f%s",
@@ -490,8 +495,10 @@ def train(
                     record["train_mse"],
                     f"  val R2={record['val_r2']:.3f}" if has_val else "",
                 )
+        # Return the full history (not truncated at the best epoch) so learning-curve
+        # plots show the complete trajectory; selection still uses ``best_model``.
         if has_val:
-            return best_model, history[: best_pos + 1], best_epoch
+            return best_model, history, best_epoch
         return model, history, n_epochs - 1
 
     # One seed for both fits; they train on different data so identical init keys

@@ -1,22 +1,49 @@
-# Titer Prediction - DataHow ML Engineer Challenge
+# Titer Prediction — DataHow ML Engineer Challenge
 
-Predict final mAb product titer from simulated upstream bioprocess time series,
-then serve the trained model behind a small REST API.
+Predict the final mAb product titer of a simulated upstream bioprocess from its
+time-series inputs (**Part 1**), and serve the trained model behind a small REST
+API (**Part 2**).
 
-The repository contains:
+The design rationale, modelling math, architecture, and testing strategy live in
+**`exploration.py`** — run `make notebook` for the rendered HTML deep-dive.
 
-- preprocessing for the `Z:`/`W:`/`X:` long-format process data;
-- an XGBoost baseline on engineered per-experiment features;
-- a neural controlled differential equation (CDE) sequence model;
-- a FastAPI inference service with `/health` and `/predict`;
-- tests for preprocessing, model-serving behavior, and Docker smoke checks.
+## Quickstart
 
-Generated data, figures, and model artifacts are intentionally not committed.
-They are reproducible from the provided challenge files.
+Requires Python 3.11/3.12 and [`uv`](https://docs.astral.sh/uv/).
 
-## Data Schema
+```bash
+uv sync --extra dev        # install (dev extras: tests, ruff, marimo)
+# then place the four challenge CSVs under data/ (see Data schema)
 
-Each experiment is a short multivariate time series.
+make models                # train the best XGBoost + CDE artifacts
+make run-api               # serve on localhost:9000 (Ctrl-C to stop)
+make api-health            # GET  /health
+make api-predict           # POST /predict  (scripts/sample_payload.json)
+
+make test                  # run the test suite
+make notebook              # render the deep-dive to artifacts/exploration.html
+```
+
+`data/`, `artifacts/`, and `figures/` are git-ignored — they hold confidential
+inputs or reproducible outputs.
+
+## Results at a glance
+
+Two models, both fit in `log1p(titer)` space and scored on raw titer:
+
+- **XGBoost** on engineered per-experiment features — the deployed default;
+  robust 5×5 repeated-CV **R² ≈ 0.84**.
+- **Neural CDE** (diffrax), a trajectory-native sequence model — **R² ≈ 0.84** on
+  a 3-seed holdout after an optimisation overhaul (adaptive solver, minibatching,
+  cosine schedule, leakage-free standardisation).
+
+XGBoost is the default: faster, simpler to serve, and its repeated-CV estimate is
+more robust on ~100 experiments. Performance is not the point of the challenge —
+clarity of the pipeline and decisions is; see `exploration.py` for the full story.
+
+## Data schema
+
+Each experiment is a short multivariate time series with one scalar target.
 
 | Prefix | Meaning | Examples |
 | --- | --- | --- |
@@ -25,65 +52,7 @@ Each experiment is a short multivariate time series.
 | `X:` | measured state trajectories | VCD, glucose, glutamine, ammonia, lactate, lysed |
 | `Y:` | target | final titer |
 
-Two modeling issues matter most: experiments have variable length but one scalar
-target, and several controls are discontinuous step inputs.
-
-## Modeling Approach
-
-The practical deployed model is XGBoost. Each experiment is converted into a
-fixed feature vector containing static design variables, TSFEL trajectory
-features, Gompertz growth-curve features for VCD, substrate/feed accounting, and
-cell-density summaries. The target is modeled in `log1p(titer)` space.
-
-The CDE is included as a trajectory-native alternative. It preserves time order,
-handles variable-length sequences, step-interpolates `W:` controls, linearly
-interpolates `X:` states, and pads batches with a flat final tail so padding
-contributes nothing to the CDE integral.
-
-XGBoost is the deployment default for this small dataset: faster, easier to
-inspect, simpler to serve, and validated with robust 5×5 repeated CV (R² ≈ 0.84).
-After an optimisation overhaul (adaptive Tsit5 solver, minibatch training with a
-cosine schedule, train-only standardisation, raw-scale early stopping), the CDE
-reaches R² ≈ 0.84 on a 3-seed holdout — now genuinely competitive rather than just
-the more structurally faithful sequence-model direction. The protocols differ
-(holdout vs repeated CV), so XGBoost stays the default on robustness grounds.
-
-## Repository Layout
-
-```text
-src/titer_prediction/
-  schema.py              column names and Z:/W:/X:/Y: conventions
-  data_preprocessing.py  CSV loading, validation, tabular and sequence containers
-  features.py            XGBoost feature engineering
-  regression.py          XGBoost training, CV, prediction, artifact IO
-  cde.py                 neural CDE training, prediction, artifact IO
-  sweep.py               reproducible hyperparameter sweeps
-  plotting.py            notebook/README figure helpers
-  service/
-    app.py               FastAPI routes and error handlers
-    dto.py               Pydantic request/response models
-    model_loader.py      loads .joblib or .eqx artifacts behind one interface
-    predictor.py         /predict payload -> training-shaped DataFrame -> model
-    batch_predict.py     CSV batch prediction via the service conversion path
-    config.py, errors.py runtime settings and service exceptions
-
-tests/
-  test_data_integrity.py       preprocessing and feature invariants
-  test_service.py              API tests with a mocked model
-  test_service_integration.py  real artifact tests, skipped when absent
-  test_sweep.py                deterministic sweep config tests
-  test_docker_smoke.py         optional Docker end-to-end smoke test
-```
-
-## Setup
-
-Requires Python 3.11/3.12 and `uv`.
-
-```bash
-uv sync --extra dev
-```
-
-Place the provided challenge files under `data/`:
+Place the provided files under `data/`:
 
 ```text
 data/datahow_interview_train_data.csv
@@ -92,94 +61,68 @@ data/datahow_interview_test_data.csv
 data/datahow_interview_test_targets-TEMPLATE.csv
 ```
 
-`data/`, `artifacts/`, and `figures/` are git-ignored because they contain
-confidential inputs or generated outputs.
+The two modelling challenges: experiments have **variable length** but a single
+scalar target, and several `W:` controls are **discontinuous step inputs**.
 
-## Reproduce
-
-```bash
-make models            # trains missing best model artifacts
-make models FORCE=1    # retrains both model families from scratch
-make predict           # writes artifacts/test_predictions.csv
-make figures           # regenerates figures/*.png
-```
-
-Default artifact paths:
+## Repository layout
 
 ```text
-artifacts/xgb_best.joblib
-artifacts/cde_best.eqx
+src/titer_prediction/
+  schema.py              column names and Z:/W:/X:/Y: conventions
+  data_preprocessing.py  CSV loading, validation, tabular + sequence containers
+  features.py            XGBoost feature engineering
+  regression.py          XGBoost training, CV, prediction, artifact IO
+  cde.py                 neural CDE training, prediction, artifact IO
+  sweep.py               reproducible hyperparameter sweeps
+  plotting.py            notebook/README figure helpers
+  service/
+    app.py               FastAPI routes + exception handlers
+    dto.py               Pydantic request/response models (DTOs)
+    model_loader.py      loads .joblib or .eqx behind one Predictor interface
+    predictor.py         request -> training-shaped DataFrame -> model
+    batch_predict.py     CSV batch prediction via the same conversion path
+    config.py, errors.py runtime settings + service exceptions
+tests/                   data-integrity, service (mock + real), sweep, docker smoke
+exploration.py           marimo deep-dive: modelling, architecture, testing, ops
 ```
 
-## Serve Locally
+## Architecture (brief)
 
-The service defaults to `MODEL_PATH=artifacts/xgb_best.joblib`.
+The service is thin and model-agnostic — HTTP concerns stay out of model logic:
+
+```text
+JSON request -> dto.PredictRequest        (Pydantic validation)
+             -> predictor.payload_to_frame()   (same preprocessing as training)
+             -> loaded model bundle       (.joblib -> XGBoost, .eqx -> CDE)
+             -> dto.PredictResponse
+```
+
+The model loads once at startup from `MODEL_PATH` (default
+`artifacts/xgb_best.joblib`). If it is missing the app still starts, `/health`
+reports `model_loaded=false`, and `/predict` returns 503; invalid payloads return
+400. Swap models by pointing `MODEL_PATH` at the `.eqx` artifact. Full rationale:
+`exploration.py` §Service architecture.
+
+## Testing & tooling
 
 ```bash
-make run-api       # foreground uvicorn server on localhost:9000
-make api-health    # GET /health
-make api-predict   # POST /predict using scripts/sample_payload.json
+make test                 # uv run pytest
+uv run pytest -m docker   # opt-in Docker end-to-end smoke test
+make check                # ruff lint + format-check + tests
 ```
 
-Manual calls:
-
-```bash
-curl -s localhost:9000/health
-curl -s -X POST localhost:9000/predict \
-  -H 'Content-Type: application/json' \
-  --data @scripts/sample_payload.json
-```
-
-Use the CDE instead:
-
-```bash
-MODEL_PATH=artifacts/cde_best.eqx make run-api
-```
-
-If the model artifact is missing, the app still starts: `/health` reports
-`model_loaded=false` and `/predict` returns 503.
+Fast data/feature-invariant and API tests (mocked model) run everywhere; the
+real-artifact and Docker tests skip cleanly when the model or Docker is absent.
+Why each layer exists: `exploration.py` §Testing strategy.
 
 ## Docker
 
-The Docker image runs the same FastAPI service. The model is mounted at runtime,
-not baked into the image.
+The image runs the same FastAPI service with the model **mounted at runtime**, not
+baked in:
 
 ```bash
 make docker-build
-make docker-run          # foreground server on localhost:9000
-make docker-api-health   # from another terminal
-make docker-api-predict  # from another terminal
+make docker-run           # foreground server on localhost:9000
+make docker-api-health    # from another terminal
+make docker-api-predict
 ```
-
-## Service Design
-
-The service is intentionally thin:
-
-```text
-JSON request
-  -> dto.PredictRequest validation
-  -> predictor.payload_to_frame()
-  -> same preprocessing path used in training
-  -> loaded model bundle
-  -> dto.PredictResponse
-```
-
-`model_loader.py` dispatches by artifact suffix:
-
-- `.joblib` -> XGBoost bundle
-- `.eqx` -> CDE bundle
-
-This keeps HTTP concerns separate from model logic and lets tests replace the
-real model with a small mock predictor.
-
-## Development
-
-```bash
-uv run pytest
-uv run pytest -m docker
-uv run ruff check .
-uv run ruff format .
-```
-
-The Docker test builds and runs the image, and skips automatically when Docker
-or the model artifact is unavailable.

@@ -395,89 +395,150 @@ def plot_cde_toy_state():
     return fig
 
 
-def cde_training_history(epochs: int | None = None, regenerate: bool = False) -> pd.DataFrame:
-    """Per-epoch training history for the selected neural CDE config.
+# Aggregated columns the multi-seed history cache must contain (else it is stale).
+_HISTORY_AGG_COLS = ("val_r2_mean", "val_rmse_mean", "train_rmse_mean")
 
-    Cached to ``artifacts/cde_training_history.csv`` so the notebook / HTML export
-    need not retrain the CDE on every run (a few minutes on the JAX stack). Pass
-    ``regenerate=True`` (or delete the cache) to retrain and overwrite.
+
+def _history_cache_is_fresh() -> bool:
+    """The cached history is reusable only if it postdates the model and has the
+    aggregated (multi-seed) schema — otherwise a rebuild silently went stale."""
+    if not CDE_TRAINING_HISTORY.exists():
+        return False
+    if CDE_TRAINING_HISTORY.stat().st_mtime < CDE_BEST_METADATA.stat().st_mtime:
+        return False  # model rebuilt after the cache (e.g. `make models`)
+    cols = pd.read_csv(CDE_TRAINING_HISTORY, nrows=0).columns
+    return all(c in cols for c in _HISTORY_AGG_COLS)
+
+
+def cde_training_history(epochs: int | None = None, regenerate: bool = False) -> pd.DataFrame:
+    """Per-epoch CDE learning curves for the selected config, **aggregated over the
+    sweep's selection seeds** (mean + min/max), so the figure matches the 3-seed mean
+    the sweep reports rather than one lucky holdout.
+
+    Cached to ``artifacts/cde_training_history.csv``; regenerated when the cache is
+    missing, older than the model metadata, or in the pre-multi-seed schema (or with
+    ``regenerate=True``).
     """
-    if not regenerate and CDE_TRAINING_HISTORY.exists():
+    if not regenerate and _history_cache_is_fresh():
         return pd.read_csv(CDE_TRAINING_HISTORY)
 
     from . import cde  # lazy: only this illustration pulls in the JAX stack
 
     metadata = _load_json(CDE_BEST_METADATA)
     cfg = metadata["best_config"]
-    epochs = int(cfg["epochs"] if epochs is None else epochs)
-    _, _, history = cde.train(
-        TRAIN_DATA,
-        TRAIN_TARGETS,
-        hidden_size=int(cfg["hidden_size"]),
-        width=int(cfg["width"]),
-        depth=int(cfg["depth"]),
-        epochs=epochs,
-        lr=float(cfg["lr"]),
-        seed=int(metadata["seed"]),
-        refit_all=False,
-    )
-    hist = pd.DataFrame(history)
+    seeds = metadata.get("seeds", [metadata.get("seed", 0)])
+    # ``epochs`` is fixed in the pipeline (not swept), so it is not in best_config.
+    epochs = int(epochs) if epochs is not None else int(cfg.get("epochs", 200))
+
+    per_seed = []
+    for s in seeds:
+        _, _, history = cde.train(
+            TRAIN_DATA,
+            TRAIN_TARGETS,
+            hidden_size=int(cfg["hidden_size"]),
+            width=int(cfg["width"]),
+            depth=int(cfg["depth"]),
+            epochs=epochs,
+            lr=float(cfg["lr"]),
+            batch_size=int(cfg.get("batch_size", 32)),
+            seed=int(s),
+            refit_all=False,
+        )
+        df = pd.DataFrame(history)
+        df["seed"] = int(s)
+        per_seed.append(df)
+
+    # Checkpoint epochs align across seeds (history is untruncated), so group by
+    # epoch and summarise each metric's mean and min/max band across seeds.
+    combined = pd.concat(per_seed, ignore_index=True)
+    metrics = [c for c in ("train_rmse", "val_rmse", "val_r2") if c in combined.columns]
+    agg = combined.groupby("epoch")[metrics].agg(["mean", "min", "max"])
+    agg.columns = [f"{metric}_{stat}" for metric, stat in agg.columns]
+    agg = agg.reset_index()
     CDE_TRAINING_HISTORY.parent.mkdir(exist_ok=True)
-    hist.to_csv(CDE_TRAINING_HISTORY, index=False)
-    return hist
+    agg.to_csv(CDE_TRAINING_HISTORY, index=False)
+    return agg
 
 
 def plot_cde_training_curves(epochs: int | None = None, regenerate: bool = False):
-    """Plot the neural CDE learning curves from cached (or freshly trained) history."""
+    """Plot the neural CDE learning curves — mean ± range over the selection seeds.
+
+    Shows the mean train/validation RMSE and validation R² across the sweep's seeds,
+    with a shaded min–max band, and a dotted reference line at the sweep's 3-seed-mean
+    validation R² (the level at which the model is selected).
+    """
     hist = cde_training_history(epochs=epochs, regenerate=regenerate)
     plot_hist = hist[hist["epoch"] > 0].copy()
     n_epochs = int(hist["epoch"].max()) + 1  # last logged epoch is epochs - 1
 
+    metadata = _load_json(CDE_BEST_METADATA)
+    n_seeds = len(metadata.get("seeds", [metadata.get("seed", 0)]))
+    r2_ref = float(metadata["best_validation"]["val_r2_mean"])
+
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     ax.plot(
         plot_hist["epoch"],
-        plot_hist["train_rmse"],
+        plot_hist["train_rmse_mean"],
         "-o",
         ms=3,
         color="#1f77b4",
-        label="train RMSE",
+        label="train RMSE (mean)",
     )
-    if "val_rmse" in plot_hist:
-        ax.plot(
-            plot_hist["epoch"],
-            plot_hist["val_rmse"],
-            "-o",
-            ms=3,
-            color="#d62728",
-            label="validation RMSE",
-        )
+    ax.plot(
+        plot_hist["epoch"],
+        plot_hist["val_rmse_mean"],
+        "-o",
+        ms=3,
+        color="#d62728",
+        label="validation RMSE (mean)",
+    )
+    ax.fill_between(
+        plot_hist["epoch"],
+        plot_hist["val_rmse_min"],
+        plot_hist["val_rmse_max"],
+        color="#d62728",
+        alpha=0.15,
+    )
     # Log scale keeps the early high-RMSE epochs from flattening the tail.
     ax.set_yscale("log")
     ax.set(
         xlabel="epoch",
         ylabel="RMSE (titer units, log scale)",
-        title=f"Best neural CDE learning curves ({n_epochs} epochs; epoch 0 omitted)",
+        title=f"Neural CDE learning curves — mean ± range over {n_seeds} seeds "
+        f"({n_epochs} epochs; epoch 0 omitted)",
     )
 
-    lines = ax.get_lines()
-    if "val_r2" in plot_hist:
-        ax2 = ax.twinx()
-        ax2.plot(
-            plot_hist["epoch"],
-            plot_hist["val_r2"],
-            "-s",
-            ms=3,
-            color="#2ca02c",
-            label="validation R² (mAb titer)",
-        )
-        ax2.set_ylabel("validation R²  (mAb titer)", color="#2ca02c")
-        ax2.tick_params(axis="y", labelcolor="#2ca02c")
-        ax2.set_ylim(-0.05, 1.0)
-        ax2.axhline(0.0, color="#2ca02c", lw=0.8, ls=":", alpha=0.5)
-        lines = lines + ax2.get_lines()
+    ax2 = ax.twinx()
+    ax2.plot(
+        plot_hist["epoch"],
+        plot_hist["val_r2_mean"],
+        "-s",
+        ms=3,
+        color="#2ca02c",
+        label="validation R² (mean)",
+    )
+    ax2.fill_between(
+        plot_hist["epoch"],
+        plot_hist["val_r2_min"],
+        plot_hist["val_r2_max"],
+        color="#2ca02c",
+        alpha=0.15,
+    )
+    ax2.axhline(
+        r2_ref,
+        color="#2ca02c",
+        lw=1.0,
+        ls="--",
+        alpha=0.8,
+        label=f"selected (3-seed mean R²={r2_ref:.2f})",
+    )
+    ax2.set_ylabel("validation R²  (mAb titer)", color="#2ca02c")
+    ax2.tick_params(axis="y", labelcolor="#2ca02c")
+    ax2.set_ylim(-0.05, 1.0)
 
+    lines = ax.get_lines() + ax2.get_lines()
     lines = [ln for ln in lines if not ln.get_label().startswith("_")]
-    ax.legend(lines, [ln.get_label() for ln in lines], loc="center right", fontsize=9)
+    ax.legend(lines, [ln.get_label() for ln in lines], loc="center right", fontsize=8)
     return fig
 
 

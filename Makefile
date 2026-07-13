@@ -9,12 +9,12 @@ DATA ?= data/datahow_interview_train_data.csv
 TARGETS ?= data/datahow_interview_train_targets.csv
 TEST_DATA ?= data/datahow_interview_test_data.csv
 
-.PHONY: help test lint format check models figures predict \
+.PHONY: help test lint format check models figures notebook predict \
         run-api api-health api-predict docker-check docker-build docker-run \
         docker-api-health docker-api-predict
 
 help:
-	@echo "Reproduce:   make models [FORCE=1]   make figures [FORCE=1]   make predict"
+	@echo "Reproduce:   make models [FORCE=1]   make figures [FORCE=1]   make notebook   make predict"
 	@echo "Serve:       make run-api   then   make api-health   make api-predict"
 	@echo "Docker:      make docker-build   make docker-run   then   make docker-api-health   make docker-api-predict"
 	@echo "Dev:         make test   make lint   make format   make check"
@@ -35,6 +35,13 @@ models:
 # Regenerate the figures the notebook/README use. FORCE=1 also refreshes caches.
 figures:
 	uv run python -m titer_prediction.plotting $(if $(filter 1,$(FORCE)),--force,)
+
+# Export the exploration notebook to a standalone HTML report. `marimo export`
+# runs the notebook, which reads the model artifacts and figures — so `models`
+# and `figures` are prerequisites. Output is gitignored (artifacts/, *.html).
+notebook: models figures
+	uv run marimo export html exploration.py -o artifacts/exploration.html -f
+	@echo ">> wrote artifacts/exploration.html"
 
 # Assignment deliverable: predictions on the test inputs, in the target-template
 # shape (RowID, Exp, Time[day], Y:Titer). Drop in the real test targets later.
